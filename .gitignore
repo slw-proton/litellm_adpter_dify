@@ -1,0 +1,27 @@
+.env
+.venv
+venv/
+venv-*/
+env/
+env-*/
+.env-*/
+build
+__pycache__
+.pytest_cache
+.next
+node_modules
+out
+user_data
+app_data
+tmp
+temp/
+servers/*/temp/
+debug
+.fastembed_cache
+.vercel
+logs/
+tests/
+.trae/
+.trae-*/
+# 测试生成模拟图片
+deprecated/
