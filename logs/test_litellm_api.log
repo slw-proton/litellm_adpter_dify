@@ -1,0 +1,64 @@
+2025-08-05 17:51:33,756 - test_litellm_api - INFO - === 开始测试LiteLLM API ===
+2025-08-05 17:51:33,756 - test_litellm_api - INFO - 发送请求...
+2025-08-05 17:51:33,756 - test_litellm_api - INFO - 请求负载: {"model": "business-api/default-model", "messages": [{"role": "system", "content": "你是一个有用的AI助手。"}, {"role": "user", "content": "请用一句话介绍人工智能。"}], "temperature": 0.7, "max_tokens": 100}
+2025-08-05 17:51:37,386 - test_litellm_api - INFO - 响应状态码: 500
+2025-08-05 17:51:37,387 - test_litellm_api - INFO - 响应内容:
+2025-08-05 17:51:37,387 - test_litellm_api - INFO - {
+  "error": {
+    "message": "litellm.APIConnectionError: CustomException - [Errno 111] Connection refused. Received Model Group=business-api/default-model\nAvailable Model Group Fallbacks=None",
+    "type": null,
+    "param": null,
+    "code": "500"
+  }
+}
+2025-08-05 17:51:37,387 - test_litellm_api - ERROR - 请求失败，状态码: 500
+2025-08-05 17:51:37,387 - test_litellm_api - ERROR - 错误信息: litellm.APIConnectionError: CustomException - [Errno 111] Connection refused. Received Model Group=business-api/default-model
+Available Model Group Fallbacks=None
+2025-08-05 17:52:46,586 - test_litellm_api - INFO - === 开始测试LiteLLM API ===
+2025-08-05 17:52:46,586 - test_litellm_api - INFO - 发送请求...
+2025-08-05 17:52:46,586 - test_litellm_api - INFO - 请求负载: {"model": "business-api/default-model", "messages": [{"role": "system", "content": "你是一个有用的AI助手。"}, {"role": "user", "content": "请用一句话介绍人工智能。"}], "temperature": 0.7, "max_tokens": 100}
+2025-08-05 17:52:49,799 - test_litellm_api - INFO - 响应状态码: 500
+2025-08-05 17:52:49,799 - test_litellm_api - INFO - 响应内容:
+2025-08-05 17:52:49,799 - test_litellm_api - INFO - {
+  "error": {
+    "message": "litellm.APIConnectionError: CustomException - {\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"query\"],\"msg\":\"Field required\",\"input\":{\"model\":\"business-api\",\"params\":{\"prompt\":[\"你是一个有用的AI助手。 请用一句话介绍人工智能。\"],\"max_tokens\":100,\"temperature\":0.7,\"top_p\":null,\"top_k\":null}}},{\"type\":\"missing\",\"loc\":[\"body\",\"model_info\"],\"msg\":\"Field required\",\"input\":{\"model\":\"business-api\",\"params\":{\"prompt\":[\"你是一个有用的AI助手。 请用一句话介绍人工智能。\"],\"max_tokens\":100,\"temperature\":0.7,\"top_p\":null,\"top_k\":null}}}]}. Received Model Group=business-api/default-model\nAvailable Model Group Fallbacks=None",
+    "type": null,
+    "param": null,
+    "code": "500"
+  }
+}
+2025-08-05 17:52:49,799 - test_litellm_api - ERROR - 请求失败，状态码: 500
+2025-08-05 17:52:49,799 - test_litellm_api - ERROR - 错误信息: litellm.APIConnectionError: CustomException - {"detail":[{"type":"missing","loc":["body","query"],"msg":"Field required","input":{"model":"business-api","params":{"prompt":["你是一个有用的AI助手。 请用一句话介绍人工智能。"],"max_tokens":100,"temperature":0.7,"top_p":null,"top_k":null}}},{"type":"missing","loc":["body","model_info"],"msg":"Field required","input":{"model":"business-api","params":{"prompt":["你是一个有用的AI助手。 请用一句话介绍人工智能。"],"max_tokens":100,"temperature":0.7,"top_p":null,"top_k":null}}}]}. Received Model Group=business-api/default-model
+Available Model Group Fallbacks=None
+2025-08-05 17:55:18,629 - test_litellm_api - INFO - === 开始测试LiteLLM API ===
+2025-08-05 17:55:18,629 - test_litellm_api - INFO - 发送请求...
+2025-08-05 17:55:18,629 - test_litellm_api - INFO - 请求负载: {"model": "business-api/default-model", "messages": [{"role": "system", "content": "你是一个有用的AI助手。"}, {"role": "user", "content": "请用一句话介绍人工智能。"}], "temperature": 0.7, "max_tokens": 100}
+2025-08-05 17:55:21,192 - test_litellm_api - INFO - 响应状态码: 500
+2025-08-05 17:55:21,192 - test_litellm_api - INFO - 响应内容:
+2025-08-05 17:55:21,192 - test_litellm_api - INFO - {
+  "error": {
+    "message": "litellm.APIConnectionError: CustomException - {\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"query\"],\"msg\":\"Field required\",\"input\":{\"model\":\"business-api\",\"params\":{\"prompt\":[\"你是一个有用的AI助手。 请用一句话介绍人工智能。\"],\"max_tokens\":100,\"temperature\":0.7,\"top_p\":null,\"top_k\":null}}},{\"type\":\"missing\",\"loc\":[\"body\",\"model_info\"],\"msg\":\"Field required\",\"input\":{\"model\":\"business-api\",\"params\":{\"prompt\":[\"你是一个有用的AI助手。 请用一句话介绍人工智能。\"],\"max_tokens\":100,\"temperature\":0.7,\"top_p\":null,\"top_k\":null}}}]}. Received Model Group=business-api/default-model\nAvailable Model Group Fallbacks=None",
+    "type": null,
+    "param": null,
+    "code": "500"
+  }
+}
+2025-08-05 17:55:21,192 - test_litellm_api - ERROR - 请求失败，状态码: 500
+2025-08-05 17:55:21,192 - test_litellm_api - ERROR - 错误信息: litellm.APIConnectionError: CustomException - {"detail":[{"type":"missing","loc":["body","query"],"msg":"Field required","input":{"model":"business-api","params":{"prompt":["你是一个有用的AI助手。 请用一句话介绍人工智能。"],"max_tokens":100,"temperature":0.7,"top_p":null,"top_k":null}}},{"type":"missing","loc":["body","model_info"],"msg":"Field required","input":{"model":"business-api","params":{"prompt":["你是一个有用的AI助手。 请用一句话介绍人工智能。"],"max_tokens":100,"temperature":0.7,"top_p":null,"top_k":null}}}]}. Received Model Group=business-api/default-model
+Available Model Group Fallbacks=None
+2025-08-05 17:56:17,062 - test_litellm_api - INFO - === 开始测试LiteLLM API ===
+2025-08-05 17:56:17,062 - test_litellm_api - INFO - 发送请求...
+2025-08-05 17:56:17,062 - test_litellm_api - INFO - 请求负载: {"model": "business-api/default-model", "messages": [{"role": "system", "content": "你是一个有用的AI助手。"}, {"role": "user", "content": "请用一句话介绍人工智能。"}], "temperature": 0.7, "max_tokens": 100}
+2025-08-05 17:56:20,592 - test_litellm_api - INFO - 响应状态码: 500
+2025-08-05 17:56:20,592 - test_litellm_api - INFO - 响应内容:
+2025-08-05 17:56:20,592 - test_litellm_api - INFO - {
+  "error": {
+    "message": "litellm.APIConnectionError: CustomException - {\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"query\"],\"msg\":\"Field required\",\"input\":{\"model\":\"business-api\",\"params\":{\"prompt\":[\"你是一个有用的AI助手。 请用一句话介绍人工智能。\"],\"max_tokens\":100,\"temperature\":0.7,\"top_p\":null,\"top_k\":null}}},{\"type\":\"missing\",\"loc\":[\"body\",\"model_info\"],\"msg\":\"Field required\",\"input\":{\"model\":\"business-api\",\"params\":{\"prompt\":[\"你是一个有用的AI助手。 请用一句话介绍人工智能。\"],\"max_tokens\":100,\"temperature\":0.7,\"top_p\":null,\"top_k\":null}}}]}. Received Model Group=business-api/default-model\nAvailable Model Group Fallbacks=None",
+    "type": null,
+    "param": null,
+    "code": "500"
+  }
+}
+2025-08-05 17:56:20,592 - test_litellm_api - ERROR - 请求失败，状态码: 500
+2025-08-05 17:56:20,592 - test_litellm_api - ERROR - 错误信息: litellm.APIConnectionError: CustomException - {"detail":[{"type":"missing","loc":["body","query"],"msg":"Field required","input":{"model":"business-api","params":{"prompt":["你是一个有用的AI助手。 请用一句话介绍人工智能。"],"max_tokens":100,"temperature":0.7,"top_p":null,"top_k":null}}},{"type":"missing","loc":["body","model_info"],"msg":"Field required","input":{"model":"business-api","params":{"prompt":["你是一个有用的AI助手。 请用一句话介绍人工智能。"],"max_tokens":100,"temperature":0.7,"top_p":null,"top_k":null}}}]}. Received Model Group=business-api/default-model
+Available Model Group Fallbacks=None
