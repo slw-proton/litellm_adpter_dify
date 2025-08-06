@@ -33,6 +33,11 @@ except ImportError:
 
 # 环境变量默认值
 DEFAULTS = {
+    # Dify 平台配置
+    "DIFY_API_KEY": "",
+    "DIFY_BASE_URL": "https://api.dify.ai/v1",
+    "DIFY_WORKFLOW_ID": "",
+    
     # 业务 API 配置
     "BUSINESS_API_URL": "http://localhost:8002/api/process",
     "BUSINESS_API_KEY": "",
@@ -56,19 +61,33 @@ def load_env_file(env_file: Optional[str] = None) -> bool:
     Returns:
         是否成功加载环境变量文件
     """
-    # 如果未指定环境变量文件，则尝试在当前目录和上级目录查找.env文件
+    # 如果未指定环境变量文件，则尝试在多个位置查找.env文件
     if env_file is None:
         # 获取当前脚本所在目录
         current_dir = Path(__file__).parent.absolute()
         
-        # 尝试在当前目录查找.env文件
-        env_file = current_dir / ".env"
-        if not env_file.exists():
-            # 尝试在上级目录查找.env文件
-            env_file = current_dir.parent / ".env"
-            if not env_file.exists():
-                logger.warning("未找到.env文件，将使用默认环境变量值")
-                return False
+        # 尝试查找.env文件的优先级顺序：
+        # 1. 当前目录
+        # 2. 上级目录
+        # 3. productAdapter/config目录
+        # 4. 项目根目录
+        
+        possible_env_files = [
+            current_dir / ".env",
+            current_dir.parent / ".env",
+            current_dir.parent / "config" / ".env",
+            current_dir.parent.parent / ".env"
+        ]
+        
+        env_file = None
+        for possible_file in possible_env_files:
+            if possible_file.exists():
+                env_file = possible_file
+                break
+        
+        if env_file is None:
+            logger.warning("未找到.env文件，将使用默认环境变量值")
+            return False
     
     # 加载环境变量文件
     try:

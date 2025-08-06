@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 # 导入日志配置
 try:
-    from ..utils.logging_config import setup_logging
+    from productAdapter.utils.logging_config import setup_logging
     # 设置日志记录器
     logger = setup_logging("litellm_adapter", logging.INFO)
 except ImportError:

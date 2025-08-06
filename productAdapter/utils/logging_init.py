@@ -137,13 +137,22 @@ def init_logger_with_env_loader(
             sys.path.insert(0, project_root)
         
         # 尝试导入高级日志配置
-        from ..utils.logging_config import setup_logging
-        return setup_logging(name)
+        try:
+            from productAdapter.utils.logging_config import setup_logging
+            return setup_logging(name)
+        except ImportError:
+            # 如果导入失败，尝试导入环境变量加载器
+            try:
+                from productAdapter.utils.env_loader import get_env
+                return setup_basic_logger(name, get_env_func=get_env)
+            except ImportError:
+                # 如果都失败了，使用基础配置
+                return setup_basic_logger(name)
         
     except ImportError:
         # 如果导入失败，尝试导入环境变量加载器
         try:
-            from ..utils.env_loader import get_env
+            from productAdapter.utils.env_loader import get_env
             return setup_basic_logger(name, get_env_func=get_env)
         except ImportError:
             # 如果都失败了，使用基础配置

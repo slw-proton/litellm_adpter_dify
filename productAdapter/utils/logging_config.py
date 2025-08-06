@@ -35,8 +35,51 @@ except ImportError:
             return default
         return value.lower() in ('true', 'yes', '1', 't', 'y')
 
-# 日志目录
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+# 日志目录 - 使用项目根目录下的logs目录
+def get_log_dir():
+    """
+    获取日志目录路径
+    统一使用项目根目录下的logs目录
+    """
+    # 尝试获取项目根目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 向上查找项目根目录（包含logs目录的目录）
+    project_root = None
+    search_dir = current_dir
+    
+    # 向上查找最多5层目录，寻找包含logs目录的项目根目录
+    for _ in range(5):
+        potential_logs_dir = os.path.join(search_dir, "logs")
+        if os.path.exists(potential_logs_dir):
+            # 检查是否是项目根目录的logs目录（通过检查是否有日期子目录结构）
+            try:
+                year_dirs = [d for d in os.listdir(potential_logs_dir) if os.path.isdir(os.path.join(potential_logs_dir, d)) and d.isdigit()]
+                if year_dirs:
+                    project_root = search_dir
+                    break
+            except (OSError, PermissionError):
+                pass
+        
+        parent_dir = os.path.dirname(search_dir)
+        if parent_dir == search_dir:  # 已经到达根目录
+            break
+        search_dir = parent_dir
+    
+    if project_root:
+        return os.path.join(project_root, "logs")
+    else:
+        # 如果找不到项目根目录，尝试使用当前目录的上级目录
+        parent_dir = os.path.dirname(current_dir)
+        potential_logs_dir = os.path.join(parent_dir, "logs")
+        if os.path.exists(potential_logs_dir):
+            return potential_logs_dir
+        else:
+            # 最后回退到当前目录的上级目录的logs
+            return os.path.join(parent_dir, "logs")
+
+# 动态获取日志目录
+LOG_DIR = get_log_dir()
 
 def create_date_based_log_path(base_dir, filename):
     """
