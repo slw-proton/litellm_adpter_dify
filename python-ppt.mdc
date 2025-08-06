@@ -1,0 +1,545 @@
+# Python 开发规范与最佳实践
+
+## 1. 导入规范
+
+### 1.1 导入语句组织
+
+#### 基本原则
+- **所有导入语句必须放在文件顶部**
+- **按类型分组导入语句**
+- **避免在函数或方法内部导入模块**
+- **移除未使用的导入语句**
+
+#### 导入顺序
+```python
+# 1. 标准库导入
+import os
+import sys
+import json
+import time
+import logging
+from typing import Dict, Any, Optional, List
+
+# 2. 第三方库导入
+import requests
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+# 3. 项目内部模块导入
+from ..utils.logging_init import init_logger_with_env_loader
+from .dify_workflow_client import DifyWorkflowClient
+```
+
+#### 导入规范示例
+```python
+# ✅ 推荐 - 导入语句在顶部，按类型分组
+import os
+import sys
+import json
+import time
+import logging
+from typing import Dict, Any, Optional
+
+import requests
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+from ..utils.logging_init import init_logger_with_env_loader
+from .dify_workflow_client import DifyWorkflowClient
+
+# ❌ 不推荐 - 在函数内部导入
+def process_data():
+    import time  # 不应该在这里导入
+    start_time = time.time()
+```
+
+### 1.2 导入错误处理
+
+#### 开发阶段原则
+- **在开发阶段直接暴露导入错误**，便于及时发现问题
+- **避免使用 try-catch 包装导入语句**
+- **确保依赖关系清晰明确**
+
+```python
+# ✅ 推荐 - 直接导入，开发阶段暴露问题
+from ..utils.logging_init import init_logger_with_env_loader
+from .dify_workflow_client import DifyWorkflowClient
+
+# ❌ 不推荐 - 复杂的导入错误处理
+try:
+    from ..utils.logging_init import init_logger_with_env_loader
+except ImportError:
+    # 复杂的fallback逻辑
+    pass
+```
+
+## 2. 命名规范
+
+### 2.1 基本命名规则
+
+#### 模块和包
+- **小写字母**，多单词用下划线连接
+- 示例：`my_module`, `data_processor`, `api_client`
+
+#### 类
+- **CamelCase**（驼峰命名法）
+- 示例：`DataProcessor`, `ApiClient`, `UserManager`
+
+#### 函数、变量、属性
+- **snake_case**（下划线命名法）
+- 示例：`process_data()`, `user_name`, `api_key`
+
+#### 常量
+- **全大写**，多单词用下划线连接
+- 示例：`MAX_CONNECTIONS`, `DEFAULT_TIMEOUT`, `API_BASE_URL`
+
+#### 私有成员
+- **单下划线开头**
+- 示例：`_private_method`, `_internal_variable`
+
+### 2.2 命名示例
+
+```python
+# 模块名
+import data_processor
+import api_client
+
+# 类名
+class DataProcessor:
+    def __init__(self):
+        self._internal_cache = {}
+        self.MAX_RETRIES = 3
+    
+    def process_user_data(self, user_id):
+        return self._validate_data(user_id)
+    
+    def _validate_data(self, data):
+        pass
+
+# 常量
+DEFAULT_TIMEOUT = 30
+MAX_CONNECTIONS = 100
+```
+
+## 3. 代码风格
+
+### 3.1 基本格式
+
+#### 缩进
+- **统一使用4个空格**
+- **不要使用Tab字符**
+
+#### 行长度
+- **每行代码不超过79个字符**
+- **长行需要换行时，使用括号或反斜杠**
+
+#### 空行使用
+- **函数和类定义之间使用两个空行**
+- **类中方法之间使用一个空行**
+- **逻辑块之间使用一个空行**
+
+### 3.2 代码格式示例
+
+```python
+import os
+import sys
+from typing import Dict, Any
+
+
+class DataProcessor:
+    """数据处理类，用于处理各种数据格式。"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self._cache = {}
+    
+    def process_data(self, data: str) -> Dict[str, Any]:
+        """处理输入数据并返回结果。"""
+        if not data:
+            return {}
+        
+        result = self._validate_and_process(data)
+        return result
+    
+    def _validate_and_process(self, data: str) -> Dict[str, Any]:
+        """验证并处理数据。"""
+        # 验证逻辑
+        if len(data) > 1000:
+            raise ValueError("数据长度超过限制")
+        
+        # 处理逻辑
+        processed_data = data.upper()
+        return {"processed": processed_data, "length": len(data)}
+
+
+def main():
+    """主函数。"""
+    processor = DataProcessor({"timeout": 30})
+    result = processor.process_data("test data")
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 4. 文档和注释
+
+### 4.1 文档字符串（Docstrings）
+
+#### 基本原则
+- **为所有公共模块、类、函数和方法编写文档字符串**
+- **使用三引号包裹**
+- **描述功能、参数、返回值和异常**
+
+#### 文档字符串格式
+
+```python
+def process_query(query: str, workflow_id: str, response_mode: str = "blocking") -> Dict[str, Any]:
+    """处理查询的便捷方法。
+    
+    完整的工作流调用流程：运行工作流 -> 获取状态 -> 提取结果
+    
+    Args:
+        query: 用户查询内容
+        workflow_id: 工作流ID
+        response_mode: 响应模式 (blocking, streaming)
+        
+    Returns:
+        包含处理结果的字典，格式如下：
+        {
+            "success": bool,
+            "content": str,
+            "workflow_run_id": str,
+            "error": str,
+            "processing_time": float
+        }
+        
+    Raises:
+        Exception: 当工作流执行失败时抛出异常
+    """
+    pass
+```
+
+### 4.2 行内注释
+
+#### 基本原则
+- **用于解释复杂或不直观的代码逻辑**
+- **注释与代码隔开两个空格**
+- **以 `#` 开头**
+
+```python
+# 构建输入数据
+input_data = {"querydata": query}
+logger.info(f"开始处理查询: {query[:50]}...")
+
+# 从data.outputs中获取内容
+data = status_result.get("data", {})
+outputs = data.get("outputs", {})
+
+# 提取content数据
+if outputs:
+    if isinstance(outputs, dict) and "querydata" in outputs:
+        content = outputs["querydata"]
+    else:
+        content = outputs
+else:
+    content = "工作流执行完成，但未返回输出数据。"
+```
+
+## 5. 异常处理
+
+### 5.1 异常处理原则
+
+#### 基本原则
+- **捕获特定异常类型，而不是泛泛的 `Exception`**
+- **使用 `finally` 确保资源被释放**
+- **提供有意义的错误信息**
+
+### 5.2 异常处理示例
+
+```python
+def run_workflow(self, workflow_id: str, input_data: Dict[str, Any], response_mode: str = "blocking") -> Dict[str, Any]:
+    """运行指定的工作流。"""
+    url = f"{self.base_url}/workflows/run"
+    payload = {
+        "workflow_id": workflow_id,
+        "inputs": input_data,
+        "response_mode": response_mode,
+        "user": "api-user"
+    }
+    
+    logger.info(f"调用Dify工作流API: {url}")
+    logger.info(f"请求数据: {json.dumps(payload, ensure_ascii=False)}")
+    
+    try:
+        response = requests.post(url, headers=self.headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info("Dify工作流API调用成功")
+            return result
+        else:
+            error_msg = f"请求失败，状态码：{response.status_code}，响应内容：{response.text}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+            
+    except requests.exceptions.Timeout:
+        error_msg = "Dify工作流API调用超时"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Dify工作流API调用异常: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+```
+
+## 6. 函数和类设计
+
+### 6.1 函数设计原则
+
+#### 基本原则
+- **单一职责原则**：每个函数只做一件事
+- **参数数量控制**：参数不宜过多，建议不超过5个
+- **返回值明确**：明确函数的返回值类型和含义
+
+### 6.2 类设计原则
+
+#### 基本原则
+- **封装性**：使用私有方法和属性
+- **继承性**：合理使用继承，避免过度设计
+- **多态性**：利用接口和抽象类
+
+### 6.3 设计示例
+
+```python
+class DifyWorkflowClient:
+    """Dify工作流客户端，用于调用Dify平台的工作流API。"""
+    
+    def __init__(self, api_key: str, base_url: str = "https://api.dify.ai/v1"):
+        """初始化Dify工作流客户端。
+        
+        Args:
+            api_key: Dify API密钥
+            base_url: Dify API基础URL
+        """
+        self.api_key = api_key
+        self.base_url = base_url.rstrip('/')
+        self.headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        logger.info(f"DifyWorkflowClient初始化完成，基础URL: {self.base_url}")
+    
+    def run_workflow(self, workflow_id: str, input_data: Dict[str, Any], response_mode: str = "blocking") -> Dict[str, Any]:
+        """运行指定的工作流。"""
+        # 实现逻辑
+        pass
+    
+    def _build_payload(self, workflow_id: str, input_data: Dict[str, Any], response_mode: str) -> Dict[str, Any]:
+        """构建请求载荷。"""
+        return {
+            "workflow_id": workflow_id,
+            "inputs": input_data,
+            "response_mode": response_mode,
+            "user": "api-user"
+        }
+```
+
+## 7. 测试规范
+
+### 7.1 测试原则
+
+#### 基本原则
+- **为所有公共接口编写测试**
+- **测试覆盖率不低于80%**
+- **测试用例要独立、可重复**
+
+### 7.2 测试示例
+
+```python
+import unittest
+from unittest.mock import Mock, patch
+
+class TestDifyWorkflowClient(unittest.TestCase):
+    """DifyWorkflowClient测试类。"""
+    
+    def setUp(self):
+        """测试前的准备工作。"""
+        self.client = DifyWorkflowClient("test-api-key", "https://test.api.dify.ai/v1")
+    
+    def test_init(self):
+        """测试初始化方法。"""
+        self.assertEqual(self.client.api_key, "test-api-key")
+        self.assertEqual(self.client.base_url, "https://test.api.dify.ai/v1")
+    
+    @patch('requests.post')
+    def test_run_workflow_success(self, mock_post):
+        """测试工作流运行成功的情况。"""
+        # 设置模拟响应
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"workflow_run_id": "test-id"}
+        mock_post.return_value = mock_response
+        
+        # 执行测试
+        result = self.client.run_workflow("test-workflow", {"test": "data"})
+        
+        # 验证结果
+        self.assertEqual(result["workflow_run_id"], "test-id")
+        mock_post.assert_called_once()
+```
+
+## 8. 性能优化
+
+### 8.1 性能原则
+
+#### 基本原则
+- **避免过早优化**
+- **使用适当的数据结构**
+- **合理使用缓存**
+- **避免不必要的计算**
+
+### 8.2 优化示例
+
+```python
+# ✅ 推荐 - 使用生成器处理大量数据
+def process_large_dataset(data_list):
+    """处理大量数据，使用生成器避免内存问题。"""
+    for item in data_list:
+        yield process_item(item)
+
+# ✅ 推荐 - 使用缓存避免重复计算
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def expensive_calculation(n):
+    """昂贵的计算，使用缓存优化。"""
+    # 复杂的计算逻辑
+    return n * n
+
+# ❌ 不推荐 - 一次性加载所有数据到内存
+def process_large_dataset_bad(data_list):
+    """不推荐的方式：一次性加载所有数据。"""
+    results = []
+    for item in data_list:
+        results.append(process_item(item))
+    return results
+```
+
+## 9. 安全规范
+
+### 9.1 安全原则
+
+#### 基本原则
+- **验证所有输入数据**
+- **使用安全的API调用方式**
+- **避免敏感信息硬编码**
+- **使用环境变量管理配置**
+
+### 9.2 安全示例
+
+```python
+import os
+from typing import Optional
+
+class SecureApiClient:
+    """安全的API客户端。"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """初始化API客户端。
+        
+        Args:
+            api_key: API密钥，如果为None则从环境变量获取
+        """
+        self.api_key = api_key or os.getenv("API_KEY")
+        if not self.api_key:
+            raise ValueError("API密钥未提供")
+    
+    def validate_input(self, data: str) -> bool:
+        """验证输入数据。"""
+        if not data or len(data) > 1000:
+            return False
+        return True
+    
+    def make_request(self, data: str) -> Dict[str, Any]:
+        """发送安全请求。"""
+        if not self.validate_input(data):
+            raise ValueError("输入数据无效")
+        
+        # 安全的请求逻辑
+        pass
+```
+
+## 10. 代码审查清单
+
+### 10.1 审查要点
+
+#### 代码质量
+- [ ] 代码是否符合PEP 8规范
+- [ ] 命名是否清晰易懂
+- [ ] 函数是否单一职责
+- [ ] 是否有适当的注释和文档
+
+#### 功能正确性
+- [ ] 功能是否按预期工作
+- [ ] 是否处理了边界情况
+- [ ] 是否有适当的错误处理
+- [ ] 是否有足够的测试覆盖
+
+#### 性能和安全
+- [ ] 是否有性能问题
+- [ ] 是否有安全漏洞
+- [ ] 是否使用了最佳实践
+- [ ] 是否考虑了可扩展性
+
+### 10.2 审查示例
+
+```python
+# 审查前 - 需要改进的代码
+def process_data(data):
+    # 没有类型提示
+    # 没有文档字符串
+    # 没有错误处理
+    result = []
+    for item in data:
+        result.append(item.upper())
+    return result
+
+# 审查后 - 改进后的代码
+from typing import List
+
+def process_data(data: List[str]) -> List[str]:
+    """将字符串列表中的所有元素转换为大写。
+    
+    Args:
+        data: 要处理的字符串列表
+        
+    Returns:
+        转换后的字符串列表
+        
+    Raises:
+        ValueError: 当输入数据为空时
+    """
+    if not data:
+        raise ValueError("输入数据不能为空")
+    
+    return [item.upper() for item in data]
+```
+
+## 11. 总结
+
+遵循这些Python开发规范可以：
+
+1. **提高代码可读性**：清晰的命名和结构
+2. **增强代码可维护性**：良好的文档和注释
+3. **减少错误**：规范的异常处理和测试
+4. **提升开发效率**：统一的代码风格和最佳实践
+5. **便于团队协作**：一致的编码标准
+
+记住：**规范是为了提高代码质量，而不是限制创造力**。在实际开发中，要根据具体情况灵活应用这些规范。
+description:
+globs:
+alwaysApply: false
+---

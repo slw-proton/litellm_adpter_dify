@@ -1,10 +1,17 @@
-.env
-.venv
-venv/
-venv-*/
-env/
-env-*/
-.env-*/
+# 环境和配置
+.env*
+.venv*/
+env*/
+venv*/
+.python-version
+.pyenv
+
+# 项目特定的环境变量文件 - 匹配所有.env文件
+**/.env
+**/.env.*
+**/config/.env*
+
+# 构建和缓存
 build
 __pycache__
 .pytest_cache
@@ -63,14 +70,6 @@ coverage.xml
 .ipynb_checkpoints/
 *.ipynb
 
-# 环境和配置
-.env*
-.venv*/
-env*/
-venv*/
-.python-version
-.pyenv
-
 # 日志文件
 *.log
 logs/
@@ -87,3 +86,4 @@ logs/
 dmypy.json
 .*__pycache__/
 *.pyc
+.cursor/**/*

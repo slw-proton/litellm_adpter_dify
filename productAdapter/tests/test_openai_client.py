@@ -394,10 +394,10 @@ async def test_openai_structured_output(logger=None):
     message = f"🔍 完整request_params keys: {list(request_params.keys())}"
     print(message)
     logger.info(f"🔍 完整request_params: {json.dumps(request_params, ensure_ascii=False, indent=2)}")
-    if 'response_format' in request_params:
-        message = f"🔍 response_format内容: {json.dumps(request_params['response_format'], ensure_ascii=False, indent=2)[:200]}..."
-        print(message)
-        logger.info(message)
+    # if 'response_format' in request_params:
+    #     message = f"🔍 response_format内容: {json.dumps(request_params['response_format'], ensure_ascii=False, indent=2)[:200]}..."
+    #     print(message)
+    #     logger.info(message)
     
     try:
         message = "发起structured output请求..."
