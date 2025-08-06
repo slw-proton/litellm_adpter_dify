@@ -20,8 +20,70 @@ debug
 .fastembed_cache
 .vercel
 logs/
-tests/
+# tests/
 .trae/
 .trae-*/
 # 测试生成模拟图片
 deprecated/
+docs/*
+
+# Python相关文件
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 测试和覆盖率
+.coverage
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# 环境和配置
+.env*
+.venv*/
+env*/
+venv*/
+.python-version
+.pyenv
+
+# 日志文件
+*.log
+logs/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 缓存文件
+.cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.*__pycache__/
+*.pyc

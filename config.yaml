@@ -11,6 +11,12 @@ model_list:
 litellm_settings:
   custom_provider_map:
     - {"provider": "my-custom-llm", "custom_handler": "custom_handler.my_custom_llm"}
+  
+  # 非入侵式日志配置
+  set_verbose: true          # 启用详细日志
+  json_logs: true           # JSON格式日志
+  success_callback: []      # 成功回调
+  failure_callback: []      # 失败回调
 
 server_settings:
   # 以下设置可通过环境变量 LITELLM_PROXY_PORT 和 LITELLM_PROXY_HOST 覆盖

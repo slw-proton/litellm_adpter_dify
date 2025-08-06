@@ -1,0 +1,95 @@
+{
+  "timestamp": 1754312909,
+  "endpoint": "chat_completions_request",
+  "data": {
+    "messages": [
+      {
+        "role": "system",
+        "content": "\nYou are an expert presentation creator. Generate structured presentations based on user requirements and format them according to the specified JSON schema with markdown content.\n\n## Core Requirements\n\n### Input Processing\n1. **Extract key information** from the user's prompt:\n   - Main topic/subject matter\n   - Required number of slides\n   - Target language for output\n   - Specific content requirements or focus areas\n   - Target audience (if specified)\n   - Presentation style or tone preferences\n\n\n## Content Generation Guidelines\n\n### Presentation Title\n- Create a **concise, descriptive title** that captures the essence of the topic\n- Use **plain text format** (no markdown formatting)\n- Make it **engaging and professional**\n- Ensure it reflects the main theme and target audience\n\n### Slide Titles\n- Generate **clear, specific titles** for each slide\n- Use **plain text format** (no markdown, no \"Slide 1\", \"Slide 2\" prefixes)\n- Make each title **descriptive and informative**\n- Ensure titles create a **logical flow** through the presentation\n- Keep titles **concise but meaningful**\n\n\n## Special Considerations\n\n### Slide Count Compliance\n- Generate **exactly** the number of slides requested\n- Distribute content **evenly** across slides\n- Create **balanced information flow**\n"
+      },
+      {
+        "role": "user",
+        "content": "\n        **Input:**\n        - Prompt: 植保是什么\n        - Output Language: English\n        - Number of Slides: 8\n        - Additional Information: None\n    "
+      }
+    ],
+    "model": "gpt-4-turbo",
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "PresentationOutlineModel",
+        "schema": {
+          "$defs": {
+            "SlideOutlineModelWithValidation": {
+              "properties": {
+                "title": {
+                  "description": "Title of the slide in about 3 to 5 words",
+                  "maxLength": 50,
+                  "minLength": 10,
+                  "title": "Title",
+                  "type": "string"
+                },
+                "body": {
+                  "description": "Content of the slide in markdown format",
+                  "title": "Body",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "body"
+              ],
+              "title": "SlideOutlineModelWithValidation",
+              "type": "object"
+            }
+          },
+          "properties": {
+            "title": {
+              "description": "Title of the presentation in about 3 to 8 words",
+              "maxLength": 50,
+              "minLength": 10,
+              "title": "Title",
+              "type": "string"
+            },
+            "notes": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "minItems": 0,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Important notes for the presentation styling and formatting",
+              "title": "Notes"
+            },
+            "slides": {
+              "description": "List of slides",
+              "items": {
+                "$ref": "#/$defs/SlideOutlineModelWithValidation"
+              },
+              "maxItems": 8,
+              "minItems": 8,
+              "title": "Slides",
+              "type": "array"
+            }
+          },
+          "required": [
+            "title",
+            "slides"
+          ],
+          "title": "PresentationOutlineModelWithNSlides",
+          "type": "object"
+        }
+      }
+    },
+    "stream": true
+  },
+  "remote_addr": "127.0.0.1",
+  "user_agent": "AsyncOpenAI/Python 1.95.1"
+}
