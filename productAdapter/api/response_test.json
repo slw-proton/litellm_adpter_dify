@@ -1,0 +1,12 @@
+{
+  "timestamp": 1754312909,
+  "endpoint": "chat_completions_response",
+  "data": {
+    "model": "gpt-4-turbo",
+    "content": "{\"title\": \"333          English...\", \"slides\": [{\"title\": \"项目概述\", \"body\": \"介绍项目的核心理念、目标和价值主张\", \"description\": \"这是关于项目概述的详细介绍，介绍项目的核心理念、目标和价值主张\"}, {\"title\": \"市场分析\", \"body\": \"分析目标市场规模、竞争环境和机会\", \"description\": \"这是关于市场分析的详细介绍，分析目标市场规模、竞争环境和机会\"}, {\"title\": \"产品特性\", \"body\": \"详细介绍产品功能、优势和差异化特点\", \"description\": \"这是关于产品特性的详细介绍，详细介绍产品功能、优势和差异化特点\"}, {\"title\": \"商业模式\", \"body\": \"阐述盈利模式、收入来源和成本结构\", \"description\": \"这是关于商业模式的详细介绍，阐述盈利模式、收入来源和成本结构\"}, {\"title\": \"团队介绍\", \"body\": \"展示核心团队成员的背景和专业能力\", \"description\": \"这是关于团队介绍的详细介绍，展示核心团队成员的背景和专业能力\"}], \"notes\": [\"这是一个关于333          English          8          None的5页演示文稿，涵盖了主要内容要点。\"]}",
+    "tool_calls": null,
+    "response_type": "stream"
+  },
+  "remote_addr": "127.0.0.1",
+  "user_agent": "AsyncOpenAI/Python 1.95.1"
+}

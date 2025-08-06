@@ -38,6 +38,40 @@ except ImportError:
 # 日志目录
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
+def create_date_based_log_path(base_dir, filename):
+    """
+    创建基于日期的日志文件路径（年/月/日结构）
+    
+    Args:
+        base_dir: 基础日志目录
+        filename: 日志文件名（不包含路径）
+        
+    Returns:
+        tuple: (full_path, relative_path)
+    """
+    # 获取当前日期
+    now = datetime.now()
+    year = str(now.year)
+    month = f"{now.month:02d}"
+    day = f"{now.day:02d}"
+    
+    # 创建年/月/日目录结构
+    date_dir = os.path.join(base_dir, year, month, day)
+    
+    # 确保目录存在
+    try:
+        os.makedirs(date_dir, exist_ok=True)
+    except Exception as e:
+        print(f"Error creating log directory {date_dir}: {str(e)}")
+        # 如果创建失败，回退到基础目录
+        date_dir = base_dir
+    
+    # 构建完整路径
+    full_path = os.path.join(date_dir, filename)
+    relative_path = os.path.join(year, month, day, filename)
+    
+    return full_path, relative_path
+
 # 确保日志目录存在
 def ensure_log_dir():
     """
@@ -77,9 +111,9 @@ def setup_logging(name="litellm_adapter", level=None):
     # 确保日志目录存在
     ensure_log_dir()
     
-    # 创建日志文件名（包含日期）
-    current_date = datetime.now().strftime("%Y%m%d")
-    log_file = os.path.join(LOG_DIR, f"{name}_{current_date}.log")
+    # 创建基于日期的日志文件路径
+    log_filename = f"{name}.log"
+    log_file, relative_path = create_date_based_log_path(LOG_DIR, log_filename)
     
     # 创建日志记录器
     logger = logging.getLogger(name)
@@ -121,5 +155,6 @@ def setup_logging(name="litellm_adapter", level=None):
     
     # 记录环境变量信息
     logger.debug(f"Environment variables: LOG_LEVEL={get_env('LOG_LEVEL', 'Not set')}")
+    logger.info(f"Log file created: {relative_path}")
     return logger
     

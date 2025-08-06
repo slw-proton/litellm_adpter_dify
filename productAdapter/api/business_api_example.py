@@ -99,6 +99,7 @@ class BusinessRequest(BaseModel):
     model_info: ModelInfo = Field(..., description="模型信息")
     temperature: Optional[float] = Field(None, description="温度参数")
     max_tokens: Optional[int] = Field(None, description="最大令牌数")
+    response_format: Optional[Dict[str, Any]] = Field(None, description="响应格式配置，用于structured output")
 
 # 定义响应模型
 class BusinessResponse(BaseModel):
@@ -106,6 +107,13 @@ class BusinessResponse(BaseModel):
     content: Any = Field(..., description="响应内容")
     timestamp: int = Field(..., description="时间戳")
     processing_time: float = Field(..., description="处理时间")
+
+def generate_presentation_response(query: str) -> str:
+    """
+    生成演示文稿的结构化响应
+    基于query中的内容生成符合schema的JSON响应
+    """
+    return "{\"title\": \"333          English...\", \"slides\": [{\"title\": \"项目概述\", \"body\": \"介绍项目的核心理念、目标和价值主张\", \"description\": \"这是关于项目概述的详细介绍，介绍项目的核心理念、目标和价值主张\"}, {\"title\": \"市场分析\", \"body\": \"分析目标市场规模、竞争环境和机会\", \"description\": \"这是关于市场分析的详细介绍，分析目标市场规模、竞争环境和机会\"}, {\"title\": \"产品特性\", \"body\": \"详细介绍产品功能、优势和差异化特点\", \"description\": \"这是关于产品特性的详细介绍，详细介绍产品功能、优势和差异化特点\"}, {\"title\": \"商业模式\", \"body\": \"阐述盈利模式、收入来源和成本结构\", \"description\": \"这是关于商业模式的详细介绍，阐述盈利模式、收入来源和成本结构\"}, {\"title\": \"团队介绍\", \"body\": \"展示核心团队成员的背景和专业能力\", \"description\": \"这是关于团队介绍的详细介绍，展示核心团队成员的背景和专业能力\"}], \"notes\": [\"这是一个关于333          English          8          None的5页演示文稿，涵盖了主要内容要点。\"]}"
 
 # 创建FastAPI应用
 app = FastAPI(title="业务API示例", description="用于测试LiteLLM适配器的业务API示例")
@@ -129,21 +137,26 @@ async def process(request: BusinessRequest):
     
     # 生成响应ID
     response_id = f"resp-{uuid.uuid4().hex[:10]}"
+    print(f"requestparams: {json.dumps(request.model_dump(), ensure_ascii=False, indent=2)}")
+    
+    # 检查是否有response_format配置
+    if request.response_format:
+        print(f"📋 收到response_format配置: {json.dumps(request.response_format, ensure_ascii=False, indent=2)}")
     
     # 根据请求生成响应内容
     if request.query.strip():
-        if "介绍" in request.query or "自己" in request.query:
-            content = "我是一个AI助手，由业务API提供服务，通过LiteLLM适配器与OpenAI兼容接口集成。"
-        elif "人工智能" in request.query:
-            content = "人工智能是模拟人类智能的计算机系统，能够学习、推理和自我改进。"
-        else:
-            content = f"收到您的问题：{request.query}\n这是来自业务API的响应，使用模型：{request.model_info.name}"
+        content = generate_presentation_response(request.query)
     else:
         content = "请提供有效的查询内容。"
     
     # 如果响应类型为json，转换为json格式
     if request.response_type == "json":
-        content = {"message": content, "type": "business_api_response"}
+        if isinstance(content, dict):
+            # 如果content已经是字典，直接使用
+            pass
+        else:
+            # 否则包装成标准格式
+            content = {"message": content, "type": "business_api_response"}
     
     # 计算处理时间
     processing_time = time.time() - start_time
@@ -157,6 +170,38 @@ async def process(request: BusinessRequest):
     )
     
     return response.dict()
+
+@app.get("/models")
+async def list_models():
+    """
+    获取可用模型列表
+    兼容OpenAI API格式
+    """
+    models_data = {
+        "object": "list",
+        "data": [
+            {
+                "id": "my-custom-model",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "business-api",
+                "permission": [],
+                "root": "my-custom-model",
+                "parent": None
+            },
+            {
+                "id": "business-presentation-model",
+                "object": "model", 
+                "created": int(time.time()),
+                "owned_by": "business-api",
+                "permission": [],
+                "root": "business-presentation-model",
+                "parent": None
+            }
+        ]
+    }
+    logger.info(f"models_data: {json.dumps(models_data, ensure_ascii=False, indent=2)}")
+    return models_data
 
 @app.get("/health")
 async def health_check():
