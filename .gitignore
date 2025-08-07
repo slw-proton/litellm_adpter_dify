@@ -89,3 +89,4 @@ dmypy.json
 .cursor/**/*
 **/config/.env
 **/__pycache__/*.pyc
+.lingma/rules/*.md
