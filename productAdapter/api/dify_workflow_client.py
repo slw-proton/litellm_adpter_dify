@@ -12,7 +12,7 @@ import os
 import sys
 import time
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, AsyncGenerator
 
 # 添加项目根目录到sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -40,18 +40,40 @@ class DifyWorkflowClient:
     用于调用Dify平台的工作流API
     """
     
-    def __init__(self, api_key: str, base_url: str = "https://api.dify.ai/v1"):
+    # 类级别的配置
+    _api_key = None
+    _base_url = None
+    _workflow_id = None
+    
+    @classmethod
+    def _load_config(cls):
+        """加载配置"""
+        if cls._api_key is None:
+            cls._api_key = os.getenv("DIFY_API_KEY", "")
+        if cls._base_url is None:
+            cls._base_url = os.getenv("DIFY_BASE_URL", "https://api.dify.ai/v1")
+        if cls._workflow_id is None:
+            cls._workflow_id = os.getenv("DIFY_WORKFLOW_ID", "")
+    
+    def __init__(self, api_key: str = None, base_url: str = None, workflow_id: str = None):
         """
         初始化Dify工作流客户端
         
         Args:
-            api_key: Dify API密钥
-            base_url: Dify API基础URL
+            api_key: Dify API密钥（如果为None，将从环境变量获取）
+            base_url: Dify API基础URL（如果为None，将从环境变量获取）
+            workflow_id: 工作流ID（如果为None，将从环境变量获取）
         """
-        self.api_key = api_key
-        self.base_url = base_url.rstrip('/')
+        # 加载配置
+        self._load_config()
+        
+        # 使用提供的参数或默认配置
+        self.api_key = api_key or self._api_key
+        self.base_url = (base_url or self._base_url).rstrip('/')
+        self.workflow_id = workflow_id or self._workflow_id
+        
         self.headers = {
-            'Authorization': f'Bearer {api_key}',
+            'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json'
         }
         
@@ -113,6 +135,62 @@ class DifyWorkflowClient:
             logger.error(f"🔍 异常类型: {type(e).__name__}")
             raise Exception(error_msg)
     
+    def run_workflow_streaming(self, workflow_id: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        运行指定的工作流（流式模式）
+        
+        Args:
+            workflow_id: 工作流 ID
+            input_data: 输入数据，包含App定义的各变量值
+            
+        Returns:
+            响应结果
+            
+        Raises:
+            Exception: 当API调用失败时抛出异常
+        """
+        url = f"{self.base_url}/workflows/run"
+        payload = {
+            "workflow_id": workflow_id,
+            "inputs": input_data,  # inputs字段是必需的，包含App定义的各变量值
+            "response_mode": "streaming",
+            "user": "api-user"
+        }
+        
+        logger.info(f"🌐 调用Dify工作流API（流式模式）")
+        logger.info(f"   📍 URL: {url}")
+        logger.info(f"   🆔 工作流ID: {workflow_id}")
+        logger.info(f"   📊 响应模式: streaming")
+        logger.info(f"   📤 请求数据: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+        
+        try:
+            logger.info(f"🚀 发送POST请求到Dify API（流式模式）...")
+            # 使用stream=True来获取流式响应
+            response = requests.post(url, headers=self.headers, json=payload, timeout=30, stream=True)
+            
+            logger.info(f"📊 收到流式响应: 状态码={response.status_code}")
+            
+            if response.status_code == 200:
+                # 对于流式响应，我们需要逐步读取数据
+                result = {"streaming": True, "response": response}
+                logger.info(f"✅ Dify工作流API流式调用成功")
+                return result
+            else:
+                error_msg = f"流式请求失败，状态码：{response.status_code}，响应内容：{response.text}"
+                logger.error(f"❌ {error_msg}")
+                logger.error(f"🔍 响应头: {dict(response.headers)}")
+                raise Exception(error_msg)
+                
+        except requests.exceptions.Timeout:
+            error_msg = "Dify工作流API流式调用超时"
+            logger.error(f"⏰ {error_msg}")
+            raise Exception(error_msg)
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Dify工作流API流式调用异常: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            logger.error(f"🔍 异常类型: {type(e).__name__}")
+            raise Exception(error_msg)
+
     def get_workflow_status(self, workflow_run_id: str) -> Dict[str, Any]:
         """
         获取工作流执行状态
@@ -312,7 +390,7 @@ class DifyWorkflowClient:
         logger.info(f"📄 提取到的内容: {json.dumps(content, ensure_ascii=False, indent=2)}")
         return content
 
-    def process_query(self, query: Any, workflow_id: str, response_mode: str = "blocking") -> Dict[str, Any]:
+    def process_query(self, query: Any, workflow_id: str) -> Dict[str, Any]:
         """
         处理查询的便捷方法
         完整的工作流调用流程：运行工作流 -> 获取状态 -> 提取结果
@@ -320,7 +398,6 @@ class DifyWorkflowClient:
         Args:
             query: 用户查询内容或消息数组
             workflow_id: 工作流ID
-            response_mode: 响应模式 (blocking, streaming)
             
         Returns:
             包含处理结果的字典，格式如下：
@@ -340,15 +417,14 @@ class DifyWorkflowClient:
             input_data = self.format_input_data(query)
             
             logger.info(f"🆔 工作流ID: {workflow_id}")
-            logger.info(f"📊 响应模式: {response_mode}")
             logger.info(f"📤 输入数据: {json.dumps(input_data, ensure_ascii=False, indent=2)}")
             
+            logger.info(f"📝 使用阻塞模式处理")
             # 运行工作流
-            logger.info(f"🚀 开始调用Dify工作流API...")
             workflow_result = self.run_workflow(
                 workflow_id=workflow_id,
                 input_data=input_data,
-                response_mode=response_mode
+                response_mode="blocking"
             )
             
             # 获取工作流执行状态和结果
@@ -377,8 +453,6 @@ class DifyWorkflowClient:
             # 从data.outputs中获取内容 
             outputs = status_result.get("outputs", {})
             
-            logger.info(f"🔍 解析输出数据...")
-            logger.info(f"📊 原始data: {json.dumps(status_result, ensure_ascii=False, indent=2)}")
             logger.info(f"📤 原始outputs: {json.dumps(outputs, ensure_ascii=False, indent=2)}")
             
             # 使用format_output_data函数格式化输出数据
@@ -410,9 +484,9 @@ class DifyWorkflowClient:
                 "error": error_msg,
                 "processing_time": processing_time
             }
-    
+
     @classmethod
-    def process_query_with_config(cls, query: Any, api_key: str = None, base_url: str = None, workflow_id: str = None, response_mode: str = "blocking") -> Dict[str, Any]:
+    def process_query_with_config(cls, query: Any, api_key: str = None, base_url: str = None, workflow_id: str = None) -> Dict[str, Any]:
         """
         带配置检查的查询处理方法
         包含完整的配置验证和错误处理
@@ -422,7 +496,6 @@ class DifyWorkflowClient:
             api_key: Dify API密钥（如果为None，将从环境变量获取）
             base_url: Dify API基础URL（如果为None，将从环境变量获取）
             workflow_id: 工作流ID（如果为None，将从环境变量获取）
-            response_mode: 响应模式 (blocking, streaming)
             
         Returns:
             包含处理结果的字典，格式如下：
@@ -438,16 +511,18 @@ class DifyWorkflowClient:
         
         logger.info(f"🔧 开始Dify工作流配置检查...")
         
-        # 从环境变量获取配置（如果未提供）
-        api_key = api_key or os.getenv("DIFY_API_KEY", "")
-        base_url = base_url or os.getenv("DIFY_BASE_URL", "https://api.dify.ai/v1")
-        workflow_id = workflow_id or os.getenv("DIFY_WORKFLOW_ID", "")
+        # 加载配置
+        cls._load_config()
+        
+        # 使用提供的参数或默认配置
+        api_key = api_key or cls._api_key
+        base_url = base_url or cls._base_url
+        workflow_id = workflow_id or cls._workflow_id
         
         logger.info(f"📋 配置信息:")
         logger.info(f"   🔑 API密钥: {'已设置' if api_key else '未设置'}")
         logger.info(f"   🌐 基础URL: {base_url}")
         logger.info(f"   🆔 工作流ID: {workflow_id if workflow_id else '未设置'}")
-        logger.info(f"   📊 响应模式: {response_mode}")
         
         # 配置检查
         if not api_key or not workflow_id:
@@ -497,13 +572,12 @@ class DifyWorkflowClient:
         try:
             # 初始化客户端并处理查询
             logger.info(f"🔧 初始化DifyWorkflowClient...")
-            client = cls(api_key=api_key, base_url=base_url)
+            client = cls(api_key=api_key, base_url=base_url, workflow_id=workflow_id)
             logger.info(f"✅ DifyWorkflowClient初始化完成")
             
             result = client.process_query(
                 query=query_content,
-                workflow_id=workflow_id,
-                response_mode=response_mode
+                workflow_id=workflow_id
             )
             
             # 添加配置检查的处理时间
@@ -525,4 +599,74 @@ class DifyWorkflowClient:
                 "workflow_run_id": "",
                 "error": error_msg,
                 "processing_time": processing_time
-            } 
+            }
+
+    @classmethod
+    async def stream_dify_response(cls, query: Any, response_id: str = None, start_time: float = None) -> AsyncGenerator[str, None]:
+        """
+        流式处理Dify响应
+        
+        Args:
+            query: 查询内容
+            response_id: 响应ID（可选）
+            start_time: 开始时间（可选）
+            
+        Yields:
+            SSE格式的数据块
+        """
+        try:
+            logger.info(f"🔄 开始流式处理Dify工作流查询")
+            
+            # 加载配置
+            cls._load_config()
+            
+            if not cls._api_key or not cls._workflow_id:
+                error_msg = "Dify配置不完整"
+                logger.error(f"❌ {error_msg}")
+                yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                return
+            
+            # 初始化客户端
+            client = cls(api_key=cls._api_key, base_url=cls._base_url, workflow_id=cls._workflow_id)
+            
+            # 格式化输入数据
+            input_data = client.format_input_data(query)
+            
+            # 构建请求
+            url = f"{cls._base_url}/workflows/run"
+            payload = {
+                "workflow_id": cls._workflow_id,
+                "inputs": input_data,
+                "response_mode": "streaming",
+                "user": "api-user"
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {cls._api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            logger.info(f"🌐 调用Dify工作流API（流式模式）")
+            logger.info(f"   📍 URL: {url}")
+            logger.info(f"   🆔 工作流ID: {cls._workflow_id}")
+            
+            # 发送流式请求
+            response = requests.post(url, headers=headers, json=payload, timeout=30, stream=True)
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Dify工作流API流式调用成功")
+                
+                # 直接转发Dify的SSE数据
+                for line in response.iter_lines(decode_unicode=True):
+                    if line:
+                        # 直接返回Dify的原始数据
+                        yield line
+            else:
+                error_msg = f"Dify API错误: {response.status_code} - {response.text}"
+                logger.error(f"❌ {error_msg}")
+                yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                
+        except Exception as e:
+            error_msg = f"流式处理失败: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            yield json.dumps({'error': error_msg}, ensure_ascii=False) 

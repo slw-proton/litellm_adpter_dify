@@ -13,7 +13,7 @@ import time
 import uuid
 import logging
 import requests
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Iterator, AsyncIterator
 
 # 添加项目根目录到系统路径
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 # 导入LiteLLM相关模块
 import litellm
 from litellm import CustomLLM, completion, get_llm_provider
+from litellm.types.utils import GenericStreamingChunk, ModelResponse
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ class MyCustomLLM(CustomLLM):
             # 提取response_format并确定响应类型
             response_format, response_type = self._extract_response_format(kwargs, "response_format")
             messages.append({"role": "response_format", "content": response_format})
-            
+            stream = self._extract_response_format(kwargs, "stream")
             # 构建业务API请求
             business_request = {
                 "query": messages,  # 全量转发完整的messages数组
@@ -132,7 +133,7 @@ class MyCustomLLM(CustomLLM):
                     "name": model
                 },
                 "response_type": response_type,
-                "stream": False,
+                "stream": stream,
                 "temperature": temperature,
                 "max_tokens": max_tokens
             }
@@ -209,8 +210,341 @@ class MyCustomLLM(CustomLLM):
         异步完成方法
         根据官方文档实现
         """
-        # 对于简单实现，直接调用同步方法
-        return self.completion(*args, **kwargs)
+        try:
+            # 从kwargs中提取参数
+            model = kwargs.get("model", "business-api")
+            messages = kwargs.get("messages", [])
+            max_tokens = kwargs.get("max_tokens", 100)
+            temperature = kwargs.get("temperature", 0.7)
+            stream = kwargs.get("stream", False)
+            
+            print(f'[custom_handler] async messages: {messages}')
+            # 确保messages是数组格式
+            if not isinstance(messages, list):
+                print(f"[custom_handler] 警告：messages不是数组格式，类型为{type(messages)}，转换为数组")
+                if isinstance(messages, str):
+                    messages = [{"role": "user", "content": messages}]
+                elif messages is None:
+                    messages = []
+                else:
+                    messages = [{"role": "user", "content": str(messages)}]
+            
+            print(f"[custom_handler] 处理async completion请求: model={model}, messages={len(messages)}条消息, stream={stream}")
+            
+            # 提取response_format并确定响应类型
+            response_format, response_type = self._extract_response_format(kwargs, "response_format")
+            messages.append({"role": "response_format", "content": response_format})
+            
+            # 构建业务API请求
+            business_request = {
+                "query": messages,  # 全量转发完整的messages数组
+                "model_info": {
+                    "name": model
+                },
+                "response_type": response_type,
+                "stream": stream,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            
+            print(f"[custom_handler] 发送到业务API的异步请求: {json.dumps(business_request, ensure_ascii=False, indent=2)}")
+            
+            # 使用aiohttp进行异步请求
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_base,
+                    json=business_request,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        business_response = await response.json()
+                        print(f"[custom_handler] 业务API异步响应: {json.dumps(business_response, ensure_ascii=False, indent=2)}")
+                        
+                        # 修复：正确提取content字段
+                        content = business_response.get("content", "Hello from custom LLM!")
+                        if isinstance(content, dict) and "message" in content:
+                            # 提取message字段中的JSON字符串
+                            mock_response = content["message"]
+                            print(f"[custom_handler] 提取到JSON内容: {mock_response[:100]}...")
+                        else:
+                            # 如果不是预期格式，直接使用content
+                            mock_response = content if isinstance(content, str) else str(content)
+                            print(f"[custom_handler] 使用原始内容: {mock_response}")
+                        
+                        # 确保mock_response不为空
+                        if not mock_response or mock_response.strip() == "":
+                            mock_response = "Hello from custom LLM! (业务API返回空内容)"
+                            print(f"[custom_handler] 业务API返回空内容，使用默认响应: {mock_response}")
+                        
+                        return litellm.completion(
+                            model="gpt-3.5-turbo",  # 使用一个已知的模型格式
+                            messages=messages,  # 使用完整的messages数组
+                            mock_response=mock_response,
+                            api_key="dummy-key",  # 添加api_key参数
+                        )
+                    else:
+                        error_text = await response.text()
+                        print(f"[custom_handler] 业务API错误: {response.status} - {error_text}")
+                        # 返回错误响应
+                        return litellm.completion(
+                            model="gpt-3.5-turbo",
+                            messages=messages,  # 使用完整的messages数组
+                            mock_response="抱歉，服务暂时不可用。",
+                            api_key="dummy-key",  # 添加api_key参数
+                        )
+                        
+        except Exception as e:
+            print(f"[custom_handler] 处理async completion请求时出错: {str(e)}")
+            # 确保messages是数组格式
+            if 'messages' in locals():
+                if not isinstance(messages, list):
+                    if isinstance(messages, str):
+                        messages = [{"role": "user", "content": messages}]
+                    elif messages is None:
+                        messages = []
+                    else:
+                        messages = [{"role": "user", "content": str(messages)}]
+            else:
+                messages = []
+            
+            # 返回错误响应
+            return litellm.completion(
+                model="gpt-3.5-turbo",
+                messages=messages,  # 使用完整的messages数组
+                mock_response="抱歉，处理请求时出现错误。",
+                api_key="dummy-key",  # 添加api_key参数
+            )
+
+    def streaming(self, *args, **kwargs) -> Iterator[GenericStreamingChunk]:
+        """
+        同步流式处理方法
+        根据官方文档实现
+        """
+        try:
+            # 从kwargs中提取参数
+            model = kwargs.get("model", "business-api")
+            messages = kwargs.get("messages", [])
+            max_tokens = kwargs.get("max_tokens", 100)
+            temperature = kwargs.get("temperature", 0.7)
+            
+            print(f'[custom_handler] streaming messages: {messages}')
+            # 确保messages是数组格式
+            if not isinstance(messages, list):
+                if isinstance(messages, str):
+                    messages = [{"role": "user", "content": messages}]
+                elif messages is None:
+                    messages = []
+                else:
+                    messages = [{"role": "user", "content": str(messages)}]
+            
+            print(f"[custom_handler] 处理streaming请求: model={model}, messages={len(messages)}条消息")
+            
+            # 提取response_format并确定响应类型
+            response_format, response_type = self._extract_response_format(kwargs, "response_format")
+            messages.append({"role": "response_format", "content": response_format})
+            
+            # 构建业务API请求
+            business_request = {
+                "query": messages,  # 全量转发完整的messages数组
+                "model_info": {
+                    "name": model
+                },
+                "response_type": response_type,
+                "stream": True,  # 强制设置为流式
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            
+            print(f"[custom_handler] 发送到业务API的流式请求: {json.dumps(business_request, ensure_ascii=False, indent=2)}")
+            
+            # 发送请求到业务API
+            response = requests.post(
+                self.api_base,
+                json=business_request,
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+                stream=True
+            )
+            
+            if response.status_code == 200:
+                # 处理流式响应
+                content_parts = []
+                for line in response.iter_lines(decode_unicode=True):
+                    if line:
+                        content_parts.append(line)
+                        # 创建流式块
+                        generic_streaming_chunk: GenericStreamingChunk = {
+                            "finish_reason": None,
+                            "index": 0,
+                            "is_finished": False,
+                            "text": line,
+                            "tool_use": None,
+                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                        }
+                        yield generic_streaming_chunk
+                
+                # 发送完成信号
+                final_chunk: GenericStreamingChunk = {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "is_finished": True,
+                    "text": "",
+                    "tool_use": None,
+                    "usage": {"completion_tokens": len(content_parts), "prompt_tokens": 0, "total_tokens": len(content_parts)},
+                }
+                yield final_chunk
+            else:
+                # 返回错误响应
+                error_chunk: GenericStreamingChunk = {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "is_finished": True,
+                    "text": "抱歉，服务暂时不可用。",
+                    "tool_use": None,
+                    "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                }
+                yield error_chunk
+                
+        except Exception as e:
+            print(f"[custom_handler] 处理streaming请求时出错: {str(e)}")
+            # 返回错误响应
+            error_chunk: GenericStreamingChunk = {
+                "finish_reason": "stop",
+                "index": 0,
+                "is_finished": True,
+                "text": "抱歉，处理请求时出现错误。",
+                "tool_use": None,
+                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+            }
+            yield error_chunk
+
+    async def astreaming(self, *args, **kwargs) -> AsyncIterator[GenericStreamingChunk]:
+        """
+        异步流式处理方法
+        根据官方文档实现
+        """
+        try:
+            # 从kwargs中提取参数
+            model = kwargs.get("model", "business-api")
+            messages = kwargs.get("messages", [])
+            max_tokens = kwargs.get("max_tokens", 100)
+            temperature = kwargs.get("temperature", 0.7)
+            
+            print(f'[custom_handler] async streaming messages: {messages}')
+            # 确保messages是数组格式
+            if not isinstance(messages, list):
+                if isinstance(messages, str):
+                    messages = [{"role": "user", "content": messages}]
+                elif messages is None:
+                    messages = []
+                else:
+                    messages = [{"role": "user", "content": str(messages)}]
+            
+            print(f"[custom_handler] 处理async streaming请求: model={model}, messages={len(messages)}条消息")
+            
+            # 提取response_format并确定响应类型
+            response_format, response_type = self._extract_response_format(kwargs, "response_format")
+            messages.append({"role": "response_format", "content": response_format})
+            
+            # 构建业务API请求
+            business_request = {
+                "query": messages,  # 全量转发完整的messages数组
+                "model_info": {
+                    "name": model
+                },
+                "response_type": response_type,
+                "stream": True,  # 强制设置为流式
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            
+            print(f"[custom_handler] 发送到业务API的异步流式请求: {json.dumps(business_request, ensure_ascii=False, indent=2)}")
+            
+            # 使用requests进行同步请求，然后模拟异步流式响应
+            import requests
+            import time
+            
+            try:
+                response = requests.post(
+                    self.api_base,
+                    json=business_request,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                    stream=True
+                )
+                
+                if response.status_code == 200:
+                    # 处理流式响应
+                    content_parts = []
+                    for line in response.iter_lines(decode_unicode=True):
+                        if line:
+                            # 直接返回Dify的原始SSE数据，不做任何处理
+                            content_parts.append(line)
+                            # 创建流式块，直接返回原始SSE数据
+                            generic_streaming_chunk: GenericStreamingChunk = {
+                                "finish_reason": None,
+                                "index": 0,
+                                "is_finished": False,
+                                "text": line,  # 直接返回原始行数据
+                                "tool_use": None,
+                                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                            }
+                            yield generic_streaming_chunk
+                    
+                    # 发送完成信号
+                    final_chunk: GenericStreamingChunk = {
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "is_finished": True,
+                        "text": "",
+                        "tool_use": None,
+                        "usage": {"completion_tokens": len("".join(content_parts)), "prompt_tokens": 0, "total_tokens": len("".join(content_parts))},
+                    }
+                    yield final_chunk
+                else:
+                    error_text = response.text
+                    print(f"[custom_handler] 业务API返回错误: {response.status_code} - {error_text}")
+                    # 发送错误块
+                    error_chunk: GenericStreamingChunk = {
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "is_finished": True,
+                        "text": f"业务API错误: {response.status_code} - {error_text}",
+                        "tool_use": None,
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                    }
+                    yield error_chunk
+                    
+            except Exception as e:
+                error_msg = f"请求业务API失败: {str(e)}"
+                print(f"[custom_handler] {error_msg}")
+                # 发送错误块
+                error_chunk: GenericStreamingChunk = {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "is_finished": True,
+                    "text": f"请求失败: {error_msg}",
+                    "tool_use": None,
+                    "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                }
+                yield error_chunk
+                
+        except Exception as e:
+            error_msg = f"异步流式处理失败: {str(e)}"
+            print(f"❌ [custom_handler] {error_msg}")
+            logger.error(f"❌ [custom_handler] {error_msg}")
+            # 发送错误块
+            error_chunk: GenericStreamingChunk = {
+                "finish_reason": "stop",
+                "index": 0,
+                "is_finished": True,
+                "text": f"处理失败: {error_msg}",
+                "tool_use": None,
+                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+            }
+            yield error_chunk
 
 # 创建实例
 my_custom_llm = MyCustomLLM()

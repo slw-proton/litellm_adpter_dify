@@ -13,11 +13,12 @@ import time
 import uuid
 import argparse
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, AsyncGenerator
 
 # FastAPI相关导入
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -70,10 +71,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+async def stream_dify_response(query: Any, response_id: str, start_time: float) -> AsyncGenerator[str, None]:
+    """
+    流式处理Dify响应
+    
+    Args:
+        query: 查询内容
+        response_id: 响应ID
+        start_time: 开始时间
+        
+    Yields:
+        SSE格式的数据块
+    """
+    try:
+        logger.info(f"🔄 开始流式处理Dify工作流查询")
+        
+        # 使用DifyWorkflowClient的流式响应方法
+        async for line in DifyWorkflowClient.stream_dify_response(query, response_id, start_time):
+            yield line
+            
+    except Exception as e:
+        error_msg = f"流式处理失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        yield json.dumps({'error': error_msg}, ensure_ascii=False)
+
 @app.post("/api/process")
 async def process(request: BusinessRequest):
     """
     处理业务请求 - 使用Dify工作流API
+    支持普通模式和SSE流式模式
     """
     # 记录开始时间
     start_time = time.time()
@@ -82,10 +109,31 @@ async def process(request: BusinessRequest):
     response_id = f"resp-{uuid.uuid4().hex[:10]}"
     print(f"requestparams: {json.dumps(request.model_dump(), ensure_ascii=False, indent=2)}")
     
+    # 根据stream参数动态设置response_mode
+    response_mode = "streaming" if request.stream else "blocking"
+    logger.info(f"📊 响应模式: {response_mode} (stream={request.stream})")
+    
+    # 如果是流式模式，返回SSE响应
+    if request.stream:
+        logger.info(f"🔄 使用SSE流式模式")
+        return StreamingResponse(
+            stream_dify_response(request.query, response_id, start_time),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    
+    # 普通模式处理
+    logger.info(f"📝 使用普通阻塞模式")
+    
     # 使用Dify工作流处理查询 - 直接传递request.query
     result = DifyWorkflowClient.process_query_with_config(
-        query=request.query,
-        response_mode="blocking"
+        query=request.query
     )
     
     if result["success"]:
