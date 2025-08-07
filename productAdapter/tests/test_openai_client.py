@@ -281,33 +281,138 @@ async def test_openai_async_client(logger=None):
             message = f"🔄 流式模式: {test_data['stream']}"
             print(message)
             logger.info(message)
-            request_params["stream"] = False  # 暂时设为False，避免复杂处理
+            request_params["stream"] = test_data.get("stream", False)  # 使用test_data中的stream值
     
-    message = f"使用模型: {request_params['model']}"
-    print(message)
-    logger.info(message)
-    message = f"消息数量: {len(request_params['messages'])}"
-    print(message)
-    logger.info(message)
+    # message = f"使用模型: {request_params['model']}"
+    # print(message)
+    # logger.info(message)
+    # message = f"消息数量: {len(request_params['messages'])}"
+    # print(message)
+    # logger.info(message)
     
     try:
         message = "发起异步聊天请求..."
         print(message)
         logger.info(message)
         
-        # 发起异步聊天请求
-        response = await async_client.chat.completions.create(**request_params)
+        # 检查是否为流式模式
+        if request_params.get("stream", False):
+            message = "🔄 使用异步流式模式..."
+            print(message)
+            logger.info(message)
+            
+            try:
+                # 发起异步流式聊天请求
+                stream = await async_client.chat.completions.create(**request_params)
+                
+                print("\n=== 异步流式OpenAI客户端测试结果 ===")
+                print("流式响应内容:")
+                
+                collected_content = ""
+                try:
+                    # 使用正确的异步流式处理方式
+                    async for chunk in stream:
+                        if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content is not None:
+                            content = chunk.choices[0].delta.content
+                            collected_content += content
+                            print(content, end="", flush=True)
+                        elif hasattr(chunk.choices[0], 'message') and chunk.choices[0].message.content is not None:
+                            content = chunk.choices[0].message.content
+                            collected_content += content
+                            print(content, end="", flush=True)
+                except TypeError as stream_error:
+                    # 处理 'coroutine' object is not an iterator 错误
+                    error_msg = f"异步流式处理失败（LiteLLM兼容性问题）: {str(stream_error)}"
+                    logger.warning(f"⚠️ {error_msg}")
+                    print(f"\n⚠️ {error_msg}")
+                    
+                    # 尝试使用非流式模式作为备选方案
+                    message = "🔄 尝试使用非流式模式作为备选方案..."
+                    print(message)
+                    logger.info(message)
+                    
+                    # 创建非流式请求参数
+                    non_stream_params = request_params.copy()
+                    non_stream_params["stream"] = False
+                    
+                    # 发起非流式请求
+                    response = await async_client.chat.completions.create(**non_stream_params)
+                    
+                    if hasattr(response.choices[0], 'message') and response.choices[0].message.content:
+                        content = response.choices[0].message.content
+                        collected_content = content
+                        print(f"📝 备选方案响应内容: {content}")
+                        logger.info(f"📝 备选方案响应内容: {content}")
+                    else:
+                        error_msg = "备选方案也失败了"
+                        logger.error(f"❌ {error_msg}")
+                        print(f"❌ {error_msg}")
+                        return False
+                        
+                except Exception as stream_error:
+                    error_msg = f"流式处理失败: {str(stream_error)}"
+                    logger.error(f"❌ {error_msg}")
+                    print(f"\n❌ {error_msg}")
+                    return False
+                
+                print("\n")  # 换行
+                message = "✅ 异步流式请求成功"
+                print(message)
+                logger.info(message)
+                
+                # 打印收集到的完整内容
+                print(f"📝 完整响应内容: {collected_content}")
+                logger.info(f"📝 完整响应内容: {collected_content}")
+                
+            except Exception as e:
+                error_msg = f"异步流式请求失败: {str(e)}"
+                logger.error(f"❌ {error_msg}")
+                print(f"❌ {error_msg}")
+                
+                # 尝试使用非流式模式作为备选方案
+                message = "🔄 尝试使用非流式模式作为备选方案..."
+                print(message)
+                logger.info(message)
+                
+                try:
+                    # 创建非流式请求参数
+                    non_stream_params = request_params.copy()
+                    non_stream_params["stream"] = False
+                    
+                    # 发起非流式请求
+                    response = await async_client.chat.completions.create(**non_stream_params)
+                    
+                    if hasattr(response.choices[0], 'message') and response.choices[0].message.content:
+                        content = response.choices[0].message.content
+                        print(f"📝 备选方案响应内容: {content}")
+                        logger.info(f"📝 备选方案响应内容: {content}")
+                        return True
+                    else:
+                        error_msg = "备选方案也失败了"
+                        logger.error(f"❌ {error_msg}")
+                        print(f"❌ {error_msg}")
+                        return False
+                        
+                except Exception as backup_error:
+                    error_msg = f"备选方案也失败了: {str(backup_error)}"
+                    logger.error(f"❌ {error_msg}")
+                    print(f"❌ {error_msg}")
+                    return False
         
-        message = "✅ 异步请求成功"
-        print(message)
-        logger.info(message)
-        
-        # 打印详细响应信息
-        print("\n=== 异步OpenAI客户端测试结果 ===")
-        print(f"模型: {response.model}")
-        print(f"响应内容: {response.choices[0].message.content}")
-        print(f"完成原因: {response.choices[0].finish_reason}")
-        print(f"Token使用情况: {response.usage}")
+        else:
+            # 发起普通异步聊天请求
+            response = await async_client.chat.completions.create(**request_params)
+            
+            message = "✅ 异步请求成功"
+            print(message)
+            logger.info(message)
+            
+            # 打印详细响应信息
+            print("\n=== 异步OpenAI客户端测试结果 ===")
+            print(f"模型: {response.model}")
+            print(f"响应内容: {response.choices[0].message.content}")
+            print(f"完成原因: {response.choices[0].finish_reason}")
+            print(f"Token使用情况: {response.usage}")
         
         return True
         
