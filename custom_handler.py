@@ -36,47 +36,65 @@ class MyCustomLLM(CustomLLM):
         self.api_base = "http://localhost:8002/api/process"
         print("[custom_handler] MyCustomLLM初始化完成")
     
-    def _extract_response_format(self, kwargs: dict) -> tuple[Optional[Dict[str, Any]], str]:
+    def _extract_response_format(self, kwargs: dict, key: str = "response_format") -> tuple[Optional[Dict[str, Any]], str]:
         """
-        从kwargs中提取response_format并确定响应类型
+        从kwargs中提取指定参数并确定响应类型
         
         Args:
-            kwargs: 包含optional_params和response_format的参数字典
+            kwargs: 包含optional_params和指定参数的参数字典
+            key: 要提取的参数名称，默认为 "response_format"
             
         Returns:
-            tuple: (response_format, response_type)
-                - response_format: response_format字典或None
+            tuple: (extracted_value, response_type)
+                - extracted_value: 提取的参数值或None
                 - response_type: 响应类型字符串 ("text" 或 "json")
+        
+        Examples:
+            # 提取response_format参数
+            response_format, response_type = self._extract_response_format(kwargs, "response_format")
+            
+            # 提取temperature参数
+            temperature, _ = self._extract_response_format(kwargs, "temperature")
         """
-        # 安全地检查optional_params中的response_format
+        if not isinstance(kwargs, dict):
+            print(f"[custom_handler] ⚠️ kwargs不是字典类型: {type(kwargs)}")
+            return None, "text"
+        
+        # 安全地检查optional_params中的指定参数
         optional_params = kwargs.get('optional_params', {})
+        if optional_params and not isinstance(optional_params, dict):
+            print(f"[custom_handler] ⚠️ optional_params不是字典类型: {type(optional_params)}")
+            optional_params = {}
+        
         print(f"[custom_handler] optional_params keys: {list(optional_params.keys()) if optional_params else 'None'}")
         
-        # 优先从optional_params中获取response_format，如果没有再从kwargs中获取
-        response_format = None
-        if optional_params and 'response_format' in optional_params:
-            response_format = optional_params['response_format']
-            print(f"[custom_handler] ✅ 从optional_params检测到response_format: {response_format.get('type', 'unknown') if response_format else 'None'}")
-            if response_format:
-                print(f"[custom_handler] optional_params.response_format详情: {json.dumps(response_format, ensure_ascii=False, indent=2)}")
-        elif kwargs.get("response_format"):
-            response_format = kwargs.get("response_format")
-            print(f"[custom_handler] ✅ 从kwargs检测到response_format: {response_format.get('type', 'unknown')}")
-            print(f"[custom_handler] response_format详情: {json.dumps(response_format, ensure_ascii=False, indent=2)}")
+        # 优先从optional_params中获取指定参数，如果没有再从kwargs中获取
+        extracted_value = None
+        if optional_params and key in optional_params:
+            extracted_value = optional_params[key]
+            print(f"[custom_handler] ✅ 从optional_params检测到{key}: {extracted_value.get('type', 'unknown') if isinstance(extracted_value, dict) else extracted_value}")
+            if extracted_value and isinstance(extracted_value, dict):
+                print(f"[custom_handler] optional_params.{key}详情: {json.dumps(extracted_value, ensure_ascii=False, indent=2)}")
+        elif kwargs.get(key) is not None:
+            extracted_value = kwargs.get(key)
+            print(f"[custom_handler] ✅ 从kwargs检测到{key}: {extracted_value.get('type', 'unknown') if isinstance(extracted_value, dict) else extracted_value}")
+            if isinstance(extracted_value, dict):
+                print(f"[custom_handler] {key}详情: {json.dumps(extracted_value, ensure_ascii=False, indent=2)}")
         else:
-            print(f"[custom_handler] ⚠️ 未检测到response_format参数（kwargs.response_format={kwargs.get('response_format')}, optional_params.response_format={optional_params.get('response_format') if optional_params else 'N/A'}）")
+            print(f"[custom_handler] ⚠️ 未检测到{key}参数（kwargs.{key}={kwargs.get(key)}, optional_params.{key}={optional_params.get(key) if optional_params else 'N/A'}）")
         
-        # 确定响应类型
+        # 确定响应类型（仅对response_format参数）
         response_type = "text"
-        if response_format:
-            if response_format.get("type") == "json_schema":
-                response_type = "json"
-                print(f"[custom_handler] 设置响应类型为JSON（structured output）")
-            elif response_format.get("type") == "json_object":
-                response_type = "json"
-                print(f"[custom_handler] 设置响应类型为JSON object")
+        if key == "response_format" and extracted_value:
+            if isinstance(extracted_value, dict):
+                if extracted_value.get("type") == "json_schema":
+                    response_type = "json"
+                    print(f"[custom_handler] 设置响应类型为JSON（structured output）")
+                elif extracted_value.get("type") == "json_object":
+                    response_type = "json"
+                    print(f"[custom_handler] 设置响应类型为JSON object")
         
-        return response_format, response_type
+        return extracted_value, response_type
     
     def completion(self, *args, **kwargs) -> litellm.ModelResponse:
         """
@@ -89,32 +107,27 @@ class MyCustomLLM(CustomLLM):
             messages = kwargs.get("messages", [])
             max_tokens = kwargs.get("max_tokens", 100)
             temperature = kwargs.get("temperature", 0.7)
+            print(f'[custom_handler] messages: {messages}')
+            # 确保messages是数组格式
+            if not isinstance(messages, list):
+                print(f"[custom_handler] 警告：messages不是数组格式，类型为{type(messages)}，转换为数组")
+                if isinstance(messages, str):
+                    messages = [{"role": "user", "content": messages}]
+                elif messages is None:
+                    messages = []
+                else:
+                    messages = [{"role": "user", "content": str(messages)}]
             
             print(f"[custom_handler] 处理completion请求: model={model}, messages={len(messages)}条消息")
             print(f"[custom_handler] 完整kwargs keys: {list(kwargs.keys())}")
             
-            # 提取用户查询（完整的消息内容）
-            user_query = ""
-            system_message = ""
-            if messages:
-                for msg in messages:
-                    if msg.get("role") == "user":
-                        user_query = msg.get("content", "")
-                    elif msg.get("role") == "system":
-                        system_message = msg.get("content", "")
-                
-                # 如果有system消息，将其包含在查询中
-                if system_message and user_query:
-                    user_query = f"System: {system_message}\n\nUser: {user_query}"
-                elif system_message:
-                    user_query = system_message
-            
             # 提取response_format并确定响应类型
-            response_format, response_type = self._extract_response_format(kwargs)
+            response_format, response_type = self._extract_response_format(kwargs, "response_format")
+            messages.append({"role": "response_format", "content": response_format})
             
             # 构建业务API请求
             business_request = {
-                "query": user_query,
+                "query": messages,  # 全量转发完整的messages数组
                 "model_info": {
                     "name": model
                 },
@@ -123,10 +136,6 @@ class MyCustomLLM(CustomLLM):
                 "temperature": temperature,
                 "max_tokens": max_tokens
             }
-            
-            # 如果有response_format，添加到请求中
-            if response_format:
-                business_request["response_format"] = response_format
             
             print(f"[custom_handler] 发送到业务API的请求: {json.dumps(business_request, ensure_ascii=False, indent=2)}")
             # 发送请求到业务API
@@ -152,27 +161,47 @@ class MyCustomLLM(CustomLLM):
                     mock_response = content if isinstance(content, str) else str(content)
                     print(f"[custom_handler] 使用原始内容: {mock_response}")
                 
+                # 确保mock_response不为空
+                if not mock_response or mock_response.strip() == "":
+                    mock_response = "Hello from custom LLM! (业务API返回空内容)"
+                    print(f"[custom_handler] 业务API返回空内容，使用默认响应: {mock_response}")
+                
                 return litellm.completion(
                     model="gpt-3.5-turbo",  # 使用一个已知的模型格式
-                    messages=[{"role": "user", "content": user_query}],
+                    messages=messages,  # 使用完整的messages数组
                     mock_response=mock_response,
+                    api_key="dummy-key",  # 添加api_key参数
                 )
             else:
                 print(f"[custom_handler] 业务API错误: {response.status_code} - {response.text}")
                 # 返回错误响应
                 return litellm.completion(
                     model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": user_query}],
+                    messages=messages,  # 使用完整的messages数组
                     mock_response="抱歉，服务暂时不可用。",
+                    api_key="dummy-key",  # 添加api_key参数
                 )
                 
         except Exception as e:
             print(f"[custom_handler] 处理completion请求时出错: {str(e)}")
+            # 确保messages是数组格式
+            if 'messages' in locals():
+                if not isinstance(messages, list):
+                    if isinstance(messages, str):
+                        messages = [{"role": "user", "content": messages}]
+                    elif messages is None:
+                        messages = []
+                    else:
+                        messages = [{"role": "user", "content": str(messages)}]
+            else:
+                messages = []
+            
             # 返回错误响应
             return litellm.completion(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": ""}],
+                messages=messages,  # 使用完整的messages数组
                 mock_response="抱歉，处理请求时出现错误。",
+                api_key="dummy-key",  # 添加api_key参数
             )
 
     async def acompletion(self, *args, **kwargs) -> litellm.ModelResponse:

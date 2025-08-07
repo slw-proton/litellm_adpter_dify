@@ -12,7 +12,14 @@ import json
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, Any, List
+import openai
+# from platform_utils import (
+#     get_platform_functions,
+#     add_functions_to_request,
+#     process_function_call,
+#     add_platform_system_message,
+#     get_platform_info
+# )
 
 # 导入通用的日志配置
 try:
@@ -99,15 +106,9 @@ def get_env(key, default=None):
     return os.environ.get(key, default)
 
 def get_env_int(key, default=None):
-    value = os.environ.get(key)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-import openai
+    """获取环境变量并转换为整数"""
+    value = get_env(key, default)
+    return int(value) if value is not None else default
 
 def test_openai_sync_client(logger=None):
     """
@@ -366,6 +367,17 @@ async def test_openai_structured_output(logger=None):
         # "temperature": test_data.get("temperature", 0.7),
         # "max_tokens": test_data.get("max_tokens", 1000)
     }
+    
+    # 使用平台工具模块添加系统消息，明确告诉 LLM 当前平台是 PPT
+    # request_params["messages"] = add_platform_system_message(request_params["messages"], platform="PPT")
+    # logger.info("✅ 使用平台工具模块添加了系统消息，明确告诉 LLM 当前平台是 PPT")
+    
+    # 使用平台工具模块添加 functions 参数，明确指定平台为 PPT
+    # request_params = add_functions_to_request(request_params, platform="PPT")
+    # logger.info("✅ 使用平台工具模块添加了 functions 参数，明确指定平台为 PPT")
+
+    # logger.info(f"🔍 添加了 functions 参数: {json.dumps(request_params.get('functions'), ensure_ascii=False, indent=2)}")
+
     logger.info(f"🔍 完整response_format: {json.dumps(test_data.get('response_format'), ensure_ascii=False, indent=2)}")
 
     # 包含response_format（如果支持的话）
@@ -380,15 +392,15 @@ async def test_openai_structured_output(logger=None):
             print(message)
             logger.warning(message)
     
-    message = f"使用模型: {request_params['model']}"
-    print(message)
-    logger.info(message)
-    message = f"消息数量: {len(request_params['messages'])}"
-    print(message)
-    logger.info(message)
-    message = f"包含response_format: {'response_format' in request_params}"
-    print(message)
-    logger.info(message)
+    # message = f"使用模型: {request_params['model']}"
+    # print(message)
+    # logger.info(message)
+    # message = f"消息数量: {len(request_params['messages'])}"
+    # print(message)
+    # logger.info(message)
+    # message = f"包含response_format: {'response_format' in request_params}"
+    # print(message)
+    # logger.info(message)
     
     # 调试：打印完整的request_params
     message = f"🔍 完整request_params keys: {list(request_params.keys())}"
@@ -409,24 +421,10 @@ async def test_openai_structured_output(logger=None):
         
         print("✅ structured output请求成功")
         print(f"response: {json.dumps(response.model_dump(), ensure_ascii=False, indent=2)}")
-        # 打印详细响应信息
-        print("\n=== Structured Output测试结果 ===")
-        print(f"模型: {response.model}")
-        print(f"响应内容: {response.choices[0].message.content}")
-        print(f"完成原因: {response.choices[0].finish_reason}")
-        print(f"Token使用情况: {response.usage}")
         
-        # 尝试解析JSON响应（如果是JSON格式）
-        if response.choices[0].message.content:
-            try:
-                json_response = json.loads(response.choices[0].message.content)
-                print("\n📄 解析JSON响应成功:")
-                print(json.dumps(json_response, ensure_ascii=False, indent=2))
-            except json.JSONDecodeError:
-                print("\n📄 响应不是有效的JSON格式")
-                print(f"原始内容: {response.choices[0].message.content}")
-        else:
-            print("\n⚠️ 响应内容为空")
+        # 使用平台工具模块处理函数调用响应
+        # function_call = response.choices[0].message.function_call
+        # function_args = process_function_call(function_call, logger)
         
         return True
         

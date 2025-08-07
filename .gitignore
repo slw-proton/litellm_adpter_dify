@@ -87,3 +87,5 @@ dmypy.json
 .*__pycache__/
 *.pyc
 .cursor/**/*
+**/config/.env
+**/__pycache__/*.pyc
