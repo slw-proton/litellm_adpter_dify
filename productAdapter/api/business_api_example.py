@@ -43,7 +43,7 @@ class ModelInfo(BaseModel):
     name: str = Field(..., description="模型名称")
 
 class BusinessRequest(BaseModel):
-    query: str = Field(..., description="用户查询")
+    query: Any = Field(..., description="用户查询或消息数组")  # 改为Any类型以接受messages数组
     response_type: str = Field("text", description="响应类型，text或json")
     stream: bool = Field(False, description="是否使用流式响应")
     model_info: ModelInfo = Field(..., description="模型信息")
@@ -82,11 +82,7 @@ async def process(request: BusinessRequest):
     response_id = f"resp-{uuid.uuid4().hex[:10]}"
     print(f"requestparams: {json.dumps(request.model_dump(), ensure_ascii=False, indent=2)}")
     
-    # 检查是否有response_format配置
-    # if request.response_format:
-    #     print(f"📋 收到response_format配置: {json.dumps(request.response_format, ensure_ascii=False, indent=2)}")
-    
-    # 使用Dify工作流处理查询
+    # 使用Dify工作流处理查询 - 直接传递request.query
     result = DifyWorkflowClient.process_query_with_config(
         query=request.query,
         response_mode="blocking"
@@ -96,8 +92,15 @@ async def process(request: BusinessRequest):
         content = result["content"]
         logger.info(f"从Dify工作流获取到内容: {content}")
     else:
-        content = result["content"]  # 错误信息已经在方法中格式化
-        logger.error(f"Dify工作流执行失败: {result['error']}")
+        # 当Dify工作流失败时，返回一个默认的响应而不是空内容
+        error_msg = result.get("error", "未知错误")
+        content = f"抱歉，Dify工作流执行失败: {error_msg}"
+        logger.error(f"Dify工作流执行失败: {error_msg}")
+    
+    # 确保content不为空
+    if not content or content.strip() == "":
+        content = "抱歉，服务暂时不可用，请稍后重试。"
+        logger.warning("Dify工作流返回空内容，使用默认响应")
     
     # 如果响应类型为json，转换为json格式
     if request.response_type == "json":

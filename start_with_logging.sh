@@ -109,6 +109,14 @@ check_service() {
         print_success "$service_name 运行正常"
         return 0
     else
+        # 对于LiteLLM代理，尝试检查models端点
+        if [[ "$service_name" == "LiteLLM代理" ]]; then
+            print_info "尝试检查LiteLLM代理的models端点..."
+            if curl -s --max-time "$timeout" "http://localhost:8080/models" > /dev/null 2>&1; then
+                print_success "$service_name 运行正常（通过models端点确认）"
+                return 0
+            fi
+        fi
         print_error "$service_name 未运行或响应异常"
         return 1
     fi
@@ -141,6 +149,7 @@ start_business_api() {
 
 # 启动LiteLLM代理
 start_litellm_proxy() {
+    export LITE_LLM_DISABLE_CHECKS=True
     print_info "=== 启动LiteLLM代理（带详细日志） ==="
     
     litellm --config config.yaml --host 0.0.0.0 --port 8080 --detailed_debug \
@@ -237,8 +246,7 @@ show_service_info() {
     echo "- LiteLLM代理: $LOG_DATE_DIR/litellm.log (包含自定义处理器日志)"
     echo ""
     print_info "停止服务:"
-    echo "pkill -f 'business_api_example.py'"
-    echo "pkill -f litellm"
+    echo "./stop_services.sh"
 }
 
 # 显示使用说明

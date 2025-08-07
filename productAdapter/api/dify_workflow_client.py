@@ -63,7 +63,7 @@ class DifyWorkflowClient:
         
         Args:
             workflow_id: 工作流 ID
-            input_data: 输入数据
+            input_data: 输入数据，包含App定义的各变量值
             response_mode: 响应模式 (blocking, streaming)
             
         Returns:
@@ -75,7 +75,7 @@ class DifyWorkflowClient:
         url = f"{self.base_url}/workflows/run"
         payload = {
             "workflow_id": workflow_id,
-            "inputs": input_data,
+            "inputs": input_data,  # inputs字段是必需的，包含App定义的各变量值
             "response_mode": response_mode,
             "user": "api-user"
         }
@@ -141,7 +141,8 @@ class DifyWorkflowClient:
                 result = response.json()
                 logger.info(f"✅ 获取工作流执行状态成功")
                 logger.info(f"📋 状态结果: {json.dumps(result, ensure_ascii=False, indent=2)}")
-                return result
+                # 确保返回有效的字典，即使是空字典
+                return result if isinstance(result, dict) else {}
             else:
                 error_msg = f"请求失败，状态码：{response.status_code}，响应内容：{response.text}"
                 logger.error(f"❌ {error_msg}")
@@ -154,6 +155,11 @@ class DifyWorkflowClient:
             raise Exception(error_msg)
         except requests.exceptions.RequestException as e:
             error_msg = f"获取工作流执行状态异常: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            logger.error(f"🔍 异常类型: {type(e).__name__}")
+            raise Exception(error_msg)
+        except Exception as e:
+            error_msg = f"获取工作流执行状态时发生未知错误: {str(e)}"
             logger.error(f"❌ {error_msg}")
             logger.error(f"🔍 异常类型: {type(e).__name__}")
             raise Exception(error_msg)
@@ -219,13 +225,100 @@ class DifyWorkflowClient:
             logger.warning(f"Dify API健康检查失败: {str(e)}")
             return False
     
-    def process_query(self, query: str, workflow_id: str, response_mode: str = "blocking") -> Dict[str, Any]:
+    def format_input_data(self, query: Any) -> Dict[str, Any]:
+        """
+        格式化输入数据，从messages数组中提取不同角色的内容
+        
+        Args:
+            query: 用户查询内容或消息数组
+            
+        Returns:
+            Dict[str, Any]: 格式化后的输入数据字典
+        """
+        input_data = {}
+        
+        if isinstance(query, list):
+            # 如果是messages数组，提取不同角色的内容
+            system_content = ""
+            user_content = ""
+            response_format_content = None
+            
+            for msg in query:
+                if isinstance(msg, dict):
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    
+                    if role == "system":
+                        system_content = content
+                    elif role == "user":
+                        user_content = content
+                    elif role == "response_format":
+                        response_format_content = content
+            
+            # 将提取的内容放入input_data
+            if system_content:
+                input_data["system"] = system_content
+            if user_content:
+                input_data["user"] = user_content
+            if response_format_content is not None:
+                input_data["response_format"] = json.dumps(response_format_content)
+            
+            # # 始终生成querydata字段，优先使用user内容，如果没有则使用整个query的JSON
+            # if user_content:
+            #     input_data["querydata"] = user_content
+            # else:
+            #     query_string = json.dumps(query, ensure_ascii=False)
+            #     input_data["querydata"] = query_string
+        else:
+            # 如果是字符串，直接使用querydata字段
+            input_data["querydata"] = str(query)
+        
+        return input_data
+
+    def format_output_data(self, outputs: Any) -> str:
+        """
+        格式化输出数据，从Dify工作流返回的outputs中提取内容
+        
+        Args:
+            outputs: Dify工作流返回的输出数据
+            
+        Returns:
+            str: 格式化后的内容字符串
+        """
+        if not outputs:
+            return "工作流执行完成，但未返回输出数据。"
+        
+        if isinstance(outputs, dict):
+            # 如果是字典，尝试从不同字段中提取内容
+            if "text" in outputs:
+                content = outputs["text"]
+                logger.info(f"✅ 从outputs.text中提取到内容")
+            elif "querydata" in outputs:
+                content = outputs["querydata"]
+                logger.info(f"✅ 从outputs.querydata中提取到内容")
+            else:
+                # 如果都没有，使用整个outputs
+                content = json.dumps(outputs, ensure_ascii=False)
+                logger.info(f"✅ 使用整个outputs作为内容")
+        elif isinstance(outputs, str):
+            # 如果是字符串，直接使用
+            content = outputs
+            logger.info(f"✅ 直接使用outputs字符串作为内容")
+        else:
+            # 其他类型，转换为字符串
+            content = str(outputs)
+            logger.info(f"✅ 将outputs转换为字符串作为内容")
+        
+        logger.info(f"📄 提取到的内容: {json.dumps(content, ensure_ascii=False, indent=2)}")
+        return content
+
+    def process_query(self, query: Any, workflow_id: str, response_mode: str = "blocking") -> Dict[str, Any]:
         """
         处理查询的便捷方法
         完整的工作流调用流程：运行工作流 -> 获取状态 -> 提取结果
         
         Args:
-            query: 用户查询内容
+            query: 用户查询内容或消息数组
             workflow_id: 工作流ID
             response_mode: 响应模式 (blocking, streaming)
             
@@ -242,10 +335,10 @@ class DifyWorkflowClient:
         start_time = time.time()
         
         try:
-            # 构建输入数据
-            input_data = {"querydata": query}
             logger.info(f"🔍 开始处理Dify工作流查询")
-            logger.info(f"📝 查询内容: {query[:100]}{'...' if len(query) > 100 else ''}")
+            # 使用format_input_data函数格式化输入数据
+            input_data = self.format_input_data(query)
+            
             logger.info(f"🆔 工作流ID: {workflow_id}")
             logger.info(f"📊 响应模式: {response_mode}")
             logger.info(f"📤 输入数据: {json.dumps(input_data, ensure_ascii=False, indent=2)}")
@@ -272,29 +365,24 @@ class DifyWorkflowClient:
             # 获取执行状态
             logger.info(f"🔄 获取工作流执行状态...")
             status_result = self.get_workflow_status(workflow_run_id)
+            
+            # 检查status_result是否有效
+            if not isinstance(status_result, dict):
+                error_msg = f"获取工作流执行状态失败，返回了无效类型: {type(status_result)}"
+                logger.error(f"❌ {error_msg}")
+                raise Exception(error_msg)
+                
             logger.info(f"📊 工作流执行状态: {json.dumps(status_result, ensure_ascii=False, indent=2)}")
             
-            # 从data.outputs中获取内容
-            data = status_result.get("data", {})
-            outputs = data.get("outputs", {})
+            # 从data.outputs中获取内容 
+            outputs = status_result.get("outputs", {})
             
             logger.info(f"🔍 解析输出数据...")
-            logger.info(f"📊 原始data: {json.dumps(data, ensure_ascii=False, indent=2)}")
+            logger.info(f"📊 原始data: {json.dumps(status_result, ensure_ascii=False, indent=2)}")
             logger.info(f"📤 原始outputs: {json.dumps(outputs, ensure_ascii=False, indent=2)}")
             
-            # 提取content数据
-            if outputs:
-                if isinstance(outputs, dict) and "querydata" in outputs:
-                    content = outputs["querydata"]
-                    logger.info(f"✅ 从outputs.querydata中提取到内容")
-                else:
-                    content = outputs
-                    logger.info(f"✅ 直接使用outputs作为内容")
-                
-                logger.info(f"📄 提取到的内容: {content[:200]}{'...' if len(str(content)) > 200 else ''}")
-            else:
-                content = "工作流执行完成，但未返回输出数据。"
-                logger.warning(f"⚠️ 工作流执行完成，但未返回输出数据")
+            # 使用format_output_data函数格式化输出数据
+            content = self.format_output_data(outputs)
             
             processing_time = time.time() - start_time
             logger.info(f"✅ 查询处理完成，耗时: {processing_time:.2f}秒")
@@ -324,13 +412,13 @@ class DifyWorkflowClient:
             }
     
     @classmethod
-    def process_query_with_config(cls, query: str, api_key: str = None, base_url: str = None, workflow_id: str = None, response_mode: str = "blocking") -> Dict[str, Any]:
+    def process_query_with_config(cls, query: Any, api_key: str = None, base_url: str = None, workflow_id: str = None, response_mode: str = "blocking") -> Dict[str, Any]:
         """
         带配置检查的查询处理方法
         包含完整的配置验证和错误处理
         
         Args:
-            query: 用户查询内容
+            query: 用户查询内容或消息数组
             api_key: Dify API密钥（如果为None，将从环境变量获取）
             base_url: Dify API基础URL（如果为None，将从环境变量获取）
             workflow_id: 工作流ID（如果为None，将从环境变量获取）
@@ -375,17 +463,34 @@ class DifyWorkflowClient:
             }
         
         # 查询内容检查
-        if not query or not query.strip():
-            error_msg = "请提供有效的查询内容"
-            logger.error(f"❌ {error_msg}")
-            logger.error(f"🔍 查询内容: '{query}'")
-            return {
-                "success": False,
-                "content": "请提供有效的查询内容。",
-                "workflow_run_id": "",
-                "error": error_msg,
-                "processing_time": time.time() - start_time
-            }
+        if isinstance(query, list):
+            # 如果是messages数组，检查是否为空
+            if not query:
+                error_msg = "请提供有效的查询内容"
+                logger.error(f"❌ {error_msg}")
+                logger.error(f"🔍 查询内容: 空消息数组")
+                return {
+                    "success": False,
+                    "content": "请提供有效的查询内容。",
+                    "workflow_run_id": "",
+                    "error": error_msg,
+                    "processing_time": time.time() - start_time
+                }
+            query_content = query  # 直接使用query，不做转换
+        else:
+            # 如果是字符串，检查是否为空
+            if not query or not str(query).strip():
+                error_msg = "请提供有效的查询内容"
+                logger.error(f"❌ {error_msg}")
+                logger.error(f"🔍 查询内容: '{query}'")
+                return {
+                    "success": False,
+                    "content": "请提供有效的查询内容。",
+                    "workflow_run_id": "",
+                    "error": error_msg,
+                    "processing_time": time.time() - start_time
+                }
+            query_content = query  # 直接使用query，不做转换
         
         logger.info(f"✅ 配置检查通过，开始处理查询...")
         
@@ -396,7 +501,7 @@ class DifyWorkflowClient:
             logger.info(f"✅ DifyWorkflowClient初始化完成")
             
             result = client.process_query(
-                query=query.strip(),
+                query=query_content,
                 workflow_id=workflow_id,
                 response_mode=response_mode
             )
