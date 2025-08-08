@@ -127,7 +127,7 @@ start_business_api() {
     print_info "=== 启动业务API（带日志） ==="
     
     cd "$PROJECT_ROOT"
-    python productAdapter/api/business_api_example.py --port 8002 --host 0.0.0.0 \
+    uvicorn productAdapter.api.business_api_example:app --host 0.0.0.0 --port 8002 --http h11 \
         2>&1 | tee -a "$LOG_DATE_DIR/business_api.log" &
     BUSINESS_API_PID=$!
     

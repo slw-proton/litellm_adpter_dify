@@ -650,21 +650,92 @@ class DifyWorkflowClient:
             logger.info(f"   📍 URL: {url}")
             logger.info(f"   🆔 工作流ID: {cls._workflow_id}")
             
-            # 发送流式请求
-            response = requests.post(url, headers=headers, json=payload, timeout=30, stream=True)
+            # 发送流式请求，添加重试机制
+            max_retries = 3
+            retry_count = 0
             
-            if response.status_code == 200:
-                logger.info(f"✅ Dify工作流API流式调用成功")
-                
-                # 直接转发Dify的SSE数据
-                for line in response.iter_lines(decode_unicode=True):
-                    if line:
-                        # 直接返回Dify的原始数据
-                        yield line
-            else:
-                error_msg = f"Dify API错误: {response.status_code} - {response.text}"
-                logger.error(f"❌ {error_msg}")
-                yield json.dumps({'error': error_msg}, ensure_ascii=False)
+            while retry_count < max_retries:
+                try:
+                    logger.info(f"🔄 尝试第 {retry_count + 1} 次请求...")
+                    
+                    # 使用更长的超时时间和重试机制
+                    response = requests.post(
+                        url, 
+                        headers=headers, 
+                        json=payload, 
+                        timeout=(10, 60),  # (连接超时, 读取超时)
+                        stream=True,
+                        # verify=True  # 确保SSL验证
+                    )
+                    
+                    if response.status_code == 200:
+                        logger.info(f"✅ Dify工作流API流式调用成功")
+                        
+                        # 直接转发Dify的SSE数据
+                        chunk_count = 0
+                        for line in response.iter_lines(decode_unicode=True):
+                            if line:
+                                chunk_count += 1
+                                print(f"[dify_workflow_client] 🔄 第{chunk_count}个数据块: {json.dumps(line, ensure_ascii=True, indent=2)}")
+                                # 直接返回Dify的原始数据
+                                # print(f"[dify_workflow_client] 📤 Yielding 第{chunk_count}个chunk")
+                                yield line
+                        
+                        print(f"[dify_workflow_client] 🏁 总共处理了{chunk_count}个数据块")
+                        break  # 成功，跳出重试循环
+                    else:
+                        error_msg = f"Dify API错误: {response.status_code} - {response.text}"
+                        logger.error(f"❌ {error_msg}")
+                        yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                        break
+                        
+                except requests.exceptions.SSLError as ssl_error:
+                    retry_count += 1
+                    error_msg = f"SSL连接错误 (尝试 {retry_count}/{max_retries}): {str(ssl_error)}"
+                    logger.error(f"❌ {error_msg}")
+                    
+                    if retry_count >= max_retries:
+                        yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                        break
+                    else:
+                        logger.info(f"⏳ 等待 2 秒后重试...")
+                        time.sleep(2)
+                        
+                except requests.exceptions.Timeout as timeout_error:
+                    retry_count += 1
+                    error_msg = f"请求超时 (尝试 {retry_count}/{max_retries}): {str(timeout_error)}"
+                    logger.error(f"❌ {error_msg}")
+                    
+                    if retry_count >= max_retries:
+                        yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                        break
+                    else:
+                        logger.info(f"⏳ 等待 2 秒后重试...")
+                        time.sleep(2)
+                        
+                except requests.exceptions.ConnectionError as conn_error:
+                    retry_count += 1
+                    error_msg = f"连接错误 (尝试 {retry_count}/{max_retries}): {str(conn_error)}"
+                    logger.error(f"❌ {error_msg}")
+                    
+                    if retry_count >= max_retries:
+                        yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                        break
+                    else:
+                        logger.info(f"⏳ 等待 2 秒后重试...")
+                        time.sleep(2)
+                        
+                except requests.exceptions.RequestException as req_error:
+                    retry_count += 1
+                    error_msg = f"请求异常 (尝试 {retry_count}/{max_retries}): {str(req_error)}"
+                    logger.error(f"❌ {error_msg}")
+                    
+                    if retry_count >= max_retries:
+                        yield json.dumps({'error': error_msg}, ensure_ascii=False)
+                        break
+                    else:
+                        logger.info(f"⏳ 等待 2 秒后重试...")
+                        time.sleep(2)
                 
         except Exception as e:
             error_msg = f"流式处理失败: {str(e)}"
