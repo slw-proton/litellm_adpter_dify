@@ -680,7 +680,6 @@ class MyCustomLLM(CustomLLM):
                                                                 text_content = self._extract_text_from_sse_data(inner_data)
                                                             except:
                                                                 text_content = ""
-                                                                continue
                                                         
                                                         if text_content == "__WORKFLOW_FINISHED__":
                                                             print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成")
@@ -705,9 +704,12 @@ class MyCustomLLM(CustomLLM):
                                                                 "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
                                                             }
                                                             yield generic_streaming_chunk
+                                                        else:
+                                                            print(f"[custom_handler] ⚠️ ASYNC_STREAMING text_chunk内容为空，跳过")
                                                 
                                                 # 处理Dify的直接事件格式
                                                 elif isinstance(outer_data, dict) and "type" in outer_data:
+                                                    print(f"[custom_handler] 🔍 ASYNC_STREAMING 处理直接事件: {outer_data.get('type')}")
                                                     text_content = self._extract_text_from_sse_data(outer_data)
                                                     if text_content == "__WORKFLOW_FINISHED__":
                                                         print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成(直接事件)")
@@ -732,6 +734,8 @@ class MyCustomLLM(CustomLLM):
                                                             "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
                                                         }
                                                         yield generic_streaming_chunk
+                                                    else:
+                                                        print(f"[custom_handler] ⚠️ ASYNC_STREAMING 直接事件内容为空，跳过")
                                                 
                                                 # 处理其他格式
                                                 else:
@@ -851,7 +855,14 @@ class MyCustomLLM(CustomLLM):
         elif sse_data.get("type") == "chunk":
             chunk_content = sse_data.get("chunk", "")
             if chunk_content:
-                return chunk_content
+                # 如果chunk内容是JSON格式，直接返回JSON字符串
+                try:
+                    # 尝试解析JSON，如果成功说明是JSON格式
+                    json.loads(chunk_content)
+                    return chunk_content
+                except (json.JSONDecodeError, TypeError):
+                    # 如果不是JSON格式，直接返回原始内容
+                    return chunk_content
         
         # 处理Dify的status事件（记录但不返回内容）
         elif sse_data.get("type") == "status":
