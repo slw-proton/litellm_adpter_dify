@@ -647,7 +647,7 @@ class MyCustomLLM(CustomLLM):
                                         if line_str and line_str.startswith('data: '):
                                             try:
                                                 # 移除 "data: " 前缀
-                                                data_content = line_str[6:].strip()  # 移除 "data: " 前缀并去除空白
+                                                data_content = line_str[6:].strip()
                                                 
                                                 if data_content == '[DONE]':
                                                     print(f"[custom_handler] 🏁 ASYNC_STREAMING 流结束信号")
@@ -662,72 +662,28 @@ class MyCustomLLM(CustomLLM):
                                                     yield final_chunk
                                                     return
                                                 
-                                                # 尝试解析外层JSON数据（Dify的嵌套格式）
-                                                try:
-                                                    outer_data = json.loads(data_content)
-                                                    
-                                                    # 检查是否是Dify的嵌套格式
-                                                    if isinstance(outer_data, dict) and "type" in outer_data and "chunk" in outer_data:
-                                                        # 这是Dify的嵌套格式，需要解析内层的chunk
-                                                        chunk_content = outer_data.get("chunk", "")
-                                                        if chunk_content:
-                                                            # 解析内层的chunk内容
+                                                # 解析JSON数据
+                                                outer_data = json.loads(data_content)
+                                                
+                                                # 处理Dify的嵌套格式
+                                                if isinstance(outer_data, dict) and "type" in outer_data and "chunk" in outer_data:
+                                                    chunk_content = outer_data.get("chunk", "")
+                                                    if chunk_content:
+                                                        try:
+                                                            inner_data = json.loads(chunk_content)
+                                                            text_content = self._extract_text_from_sse_data(inner_data)
+                                                        except json.JSONDecodeError:
+                                                            # 尝试修复单引号格式
+                                                            chunk_content_fixed = chunk_content.replace("'", '"')
                                                             try:
-                                                                inner_data = json.loads(chunk_content)
+                                                                inner_data = json.loads(chunk_content_fixed)
                                                                 text_content = self._extract_text_from_sse_data(inner_data)
-                                                                if text_content == "__WORKFLOW_FINISHED__":
-                                                                    print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成")
-                                                                    final_chunk: GenericStreamingChunk = {
-                                                                        "finish_reason": "stop",
-                                                                        "index": 0,
-                                                                        "is_finished": True,
-                                                                        "text": "",
-                                                                        "tool_use": None,
-                                                                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                                    }
-                                                                    yield final_chunk
-                                                                    return
-                                                                elif text_content:
-                                                                    print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding text_chunk内容: {text_content[:50]}...")
-                                                                    generic_streaming_chunk: GenericStreamingChunk = {
-                                                                        "finish_reason": None,
-                                                                        "index": 0,
-                                                                        "is_finished": False,
-                                                                        "text": text_content,
-                                                                        "tool_use": None,
-                                                                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                                    }
-                                                                    yield generic_streaming_chunk
-                                                                else:
-                                                                    print(f"[custom_handler] ⚠️ ASYNC_STREAMING text_chunk内容为空，跳过")
-                                                                    
-                                                            except json.JSONDecodeError as inner_e:
-                                                                # 内层JSON解析失败，可能是部分数据或单引号格式
-                                                                print(f"[custom_handler] ⚠️ 内层JSON解析失败: {str(inner_e)}, chunk内容: {chunk_content[:100]}...")
-                                                                # 尝试处理单引号格式
-                                                                try:
-                                                                    # 替换单引号为双引号
-                                                                    chunk_content_fixed = chunk_content.replace("'", '"')
-                                                                    inner_data = json.loads(chunk_content_fixed)
-                                                                    text_content = self._extract_text_from_sse_data(inner_data)
-                                                                    if text_content:
-                                                                        print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding text_chunk内容(修复后): {text_content[:50]}...")
-                                                                        generic_streaming_chunk: GenericStreamingChunk = {
-                                                                            "finish_reason": None,
-                                                                            "index": 0,
-                                                                            "is_finished": False,
-                                                                            "text": text_content,
-                                                                            "tool_use": None,
-                                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                                        }
-                                                                        yield generic_streaming_chunk
-                                                                except:
-                                                                    continue
-                                                    else:
-                                                        # 不是Dify的嵌套格式，按原来的方式处理
-                                                        text_content = self._extract_text_from_sse_data(outer_data)
+                                                            except:
+                                                                text_content = ""
+                                                                continue
+                                                        
                                                         if text_content == "__WORKFLOW_FINISHED__":
-                                                            print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成(直接格式)")
+                                                            print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成")
                                                             final_chunk: GenericStreamingChunk = {
                                                                 "finish_reason": "stop",
                                                                 "index": 0,
@@ -739,7 +695,7 @@ class MyCustomLLM(CustomLLM):
                                                             yield final_chunk
                                                             return
                                                         elif text_content:
-                                                            print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding直接内容: {text_content[:50]}...")
+                                                            print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding text_chunk内容: {text_content[:50]}...")
                                                             generic_streaming_chunk: GenericStreamingChunk = {
                                                                 "finish_reason": None,
                                                                 "index": 0,
@@ -749,32 +705,65 @@ class MyCustomLLM(CustomLLM):
                                                                 "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
                                                             }
                                                             yield generic_streaming_chunk
-                                                        else:
-                                                            print(f"[custom_handler] ⚠️ ASYNC_STREAMING 直接内容为空，跳过")
-                                                            
-                                                except json.JSONDecodeError as outer_e:
-                                                    # 外层JSON解析失败，可能是部分数据或其他格式
-                                                    print(f"[custom_handler] ⚠️ 外层JSON解析失败: {str(outer_e)}, 原始内容: {data_content[:100]}...")
-                                                    # 尝试处理单引号格式
-                                                    try:
-                                                        # 替换单引号为双引号
-                                                        data_content_fixed = data_content.replace("'", '"')
-                                                        outer_data = json.loads(data_content_fixed)
-                                                        text_content = self._extract_text_from_sse_data(outer_data)
-                                                        if text_content:
-                                                            print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding内容(修复后): {text_content[:50]}...")
-                                                            generic_streaming_chunk: GenericStreamingChunk = {
-                                                                "finish_reason": None,
-                                                                "index": 0,
-                                                                "is_finished": False,
-                                                                "text": text_content,
-                                                                "tool_use": None,
-                                                                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                            }
-                                                            yield generic_streaming_chunk
-                                                    except:
-                                                        continue
+                                                
+                                                # 处理Dify的直接事件格式
+                                                elif isinstance(outer_data, dict) and "type" in outer_data:
+                                                    text_content = self._extract_text_from_sse_data(outer_data)
+                                                    if text_content == "__WORKFLOW_FINISHED__":
+                                                        print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成(直接事件)")
+                                                        final_chunk: GenericStreamingChunk = {
+                                                            "finish_reason": "stop",
+                                                            "index": 0,
+                                                            "is_finished": True,
+                                                            "text": "",
+                                                            "tool_use": None,
+                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                                                        }
+                                                        yield final_chunk
+                                                        return
+                                                    elif text_content:
+                                                        print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding直接事件内容: {text_content[:50]}...")
+                                                        generic_streaming_chunk: GenericStreamingChunk = {
+                                                            "finish_reason": None,
+                                                            "index": 0,
+                                                            "is_finished": False,
+                                                            "text": text_content,
+                                                            "tool_use": None,
+                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                                                        }
+                                                        yield generic_streaming_chunk
+                                                
+                                                # 处理其他格式
+                                                else:
+                                                    text_content = self._extract_text_from_sse_data(outer_data)
+                                                    if text_content == "__WORKFLOW_FINISHED__":
+                                                        print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成(直接格式)")
+                                                        final_chunk: GenericStreamingChunk = {
+                                                            "finish_reason": "stop",
+                                                            "index": 0,
+                                                            "is_finished": True,
+                                                            "text": "",
+                                                            "tool_use": None,
+                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                                                        }
+                                                        yield final_chunk
+                                                        return
+                                                    elif text_content:
+                                                        print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding直接内容: {text_content[:50]}...")
+                                                        generic_streaming_chunk: GenericStreamingChunk = {
+                                                            "finish_reason": None,
+                                                            "index": 0,
+                                                            "is_finished": False,
+                                                            "text": text_content,
+                                                            "tool_use": None,
+                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                                                        }
+                                                        yield generic_streaming_chunk
                                             
+                                            except json.JSONDecodeError as e:
+                                                # JSON解析失败，可能是部分数据或其他格式
+                                                print(f"[custom_handler] ⚠️ JSON解析失败: {str(e)}, 原始内容: {data_content[:100]}...")
+                                                continue
                                             except Exception as e:
                                                 # 如果整体解析失败，记录错误但继续处理
                                                 print(f"[custom_handler] ⚠️ SSE解析异常: {str(e)}, 行内容: {line_str[:100]}...")
@@ -856,6 +845,23 @@ class MyCustomLLM(CustomLLM):
         # 处理workflow_finished事件
         elif sse_data.get("event") == "workflow_finished":
             # 工作流完成，返回特殊标记
+            return "__WORKFLOW_FINISHED__"
+        
+        # 处理Dify的chunk事件（直接返回chunk内容）
+        elif sse_data.get("type") == "chunk":
+            chunk_content = sse_data.get("chunk", "")
+            if chunk_content:
+                return chunk_content
+        
+        # 处理Dify的status事件（记录但不返回内容）
+        elif sse_data.get("type") == "status":
+            status_message = sse_data.get("status", "")
+            print(f"[custom_handler] 📊 状态更新: {status_message}")
+            return ""  # 状态事件不返回内容
+        
+        # 处理Dify的complete事件
+        elif sse_data.get("type") == "complete":
+            print(f"[custom_handler] 🏁 收到完成事件")
             return "__WORKFLOW_FINISHED__"
         
         # 处理其他事件类型（node_started, node_finished等）
