@@ -87,13 +87,36 @@ async def stream_dify_response(query: Any, response_id: str, start_time: float) 
     try:
         logger.info(f"🔄 开始流式处理Dify工作流查询")
         
+        import sys, asyncio
         # 使用DifyWorkflowClient的流式响应方法
+        chunk_count = 0
         async for line in DifyWorkflowClient.stream_dify_response(query, response_id, start_time):
-            yield line
-            
+            try:
+                chunk_count += 1
+                print(f"[business_api] 🔄 第{chunk_count}个数据块: {line[:100]}...")
+                
+                # 确保line是字符串格式
+                if isinstance(line, str):
+                    print(f"[business_api] 📤 Yielding 第{chunk_count}个chunk")
+                    yield line
+                else:
+                    # 如果不是字符串，转换为字符串
+                    print(f"[business_api] 📤 Yielding 第{chunk_count}个chunk(转换后)")
+                    yield str(line)
+                await asyncio.sleep(0)
+                sys.stdout.flush()
+            except Exception as line_error:
+                logger.error(f"❌ 处理流式数据行时出错: {str(line_error)}")
+                error_msg = f"数据处理错误: {str(line_error)}"
+                yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
+                break
+        
+        print(f"[business_api] 🏁 总共处理了{chunk_count}个数据块")
+                
     except Exception as e:
         error_msg = f"流式处理失败: {str(e)}"
         logger.error(f"❌ {error_msg}")
+        logger.error(f"🔍 异常详情: {type(e).__name__}: {str(e)}")
         yield json.dumps({'error': error_msg}, ensure_ascii=False)
 
 @app.post("/api/process")
@@ -116,17 +139,13 @@ async def process(request: BusinessRequest):
     # 如果是流式模式，返回SSE响应
     if request.stream:
         logger.info(f"🔄 使用SSE流式模式")
-        return StreamingResponse(
+        response = StreamingResponse(
             stream_dify_response(request.query, response_id, start_time),
-            media_type="text/plain",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-            }
+            media_type="text/event-stream"
         )
+        response.headers["X-Accel-Buffering"] = "no"
+        response.headers["Cache-Control"] = "no-cache"
+        return response
     
     # 普通模式处理
     logger.info(f"📝 使用普通阻塞模式")
