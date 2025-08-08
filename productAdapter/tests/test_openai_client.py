@@ -185,7 +185,8 @@ def load_request_test_data():
     从request_test.json文件加载测试数据
     """
     try:
-        request_test_file = os.path.join(os.path.dirname(__file__), "request_test.json")
+        # request_test_file = os.path.join(os.path.dirname(__file__), "request_test.json")
+        request_test_file = os.path.join(os.path.dirname(__file__), "演示文稿结构_request_messages_20250808_094025.json")
         if os.path.exists(request_test_file):
             with open(request_test_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -251,7 +252,8 @@ async def test_openai_async_client(logger=None):
             "model": model_name,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 150
+            "max_tokens": 150,
+            "stream": True
         }
     else:
         message = "✅ 使用request_test.json中的测试数据"
@@ -312,15 +314,40 @@ async def test_openai_async_client(logger=None):
                 collected_content = ""
                 try:
                     # 使用正确的异步流式处理方式
+                    chunk_count = 0
                     async for chunk in stream:
-                        if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content is not None:
-                            content = chunk.choices[0].delta.content
-                            collected_content += content
-                            print(content, end="", flush=True)
-                        elif hasattr(chunk.choices[0], 'message') and chunk.choices[0].message.content is not None:
-                            content = chunk.choices[0].message.content
-                            collected_content += content
-                            print(content, end="", flush=True)
+                        chunk_count += 1
+                        print(f"\n[客户端] 📦 收到第{chunk_count}个流式块")
+                        print(f"[客户端] 完整chunk对象: {chunk}")
+                        print(f"[客户端] chunk类型: {type(chunk)}")
+                        print(f"[客户端] chunk属性: {dir(chunk)}")
+                        
+                        # 检查chunk是否有choices属性
+                        if hasattr(chunk, 'choices') and chunk.choices:
+                            print(f"[客户端] choices长度: {len(chunk.choices)}")
+                            if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content is not None:
+                                content = chunk.choices[0].delta.content
+                                collected_content += content
+                                print(f"[客户端] 📝 内容: {repr(content)}")
+                                print(content, end="", flush=True)
+                            elif hasattr(chunk.choices[0], 'message') and chunk.choices[0].message.content is not None:
+                                content = chunk.choices[0].message.content
+                                collected_content += content
+                                print(f"[客户端] 📝 内容: {repr(content)}")
+                                print(content, end="", flush=True)
+                            else:
+                                print(f"[客户端] ⚠️ chunk.choices[0].delta.content 为 None")
+                                print(f"[客户端] chunk.choices[0]属性: {dir(chunk.choices[0])}")
+                        else:
+                            print(f"[客户端] ⚠️ chunk没有choices属性或choices为空")
+                            # 尝试直接访问text属性（GenericStreamingChunk格式）
+                            if hasattr(chunk, 'text') and chunk.text is not None:
+                                content = chunk.text
+                                collected_content += content
+                                print(f"[客户端] 📝 GenericStreamingChunk内容: {repr(content)}")
+                                print(content, end="", flush=True)
+                            else:
+                                print(f"[客户端] ⚠️ 无法获取内容，chunk属性: {dir(chunk)}")
                 except TypeError as stream_error:
                     # 处理 'coroutine' object is not an iterator 错误
                     error_msg = f"异步流式处理失败（LiteLLM兼容性问题）: {str(stream_error)}"
@@ -842,7 +869,7 @@ async def test_openai_sync_vs_async_comparison(logger=None):
     # 测试参数
     model_name = get_env("DEFAULT_MODEL", "my-custom-model")
     test_messages = [
-        {"role": "user", "content": "请简单介绍一下LiteLLM"}
+        {"role": "user", "content": "请介绍一下LiteLLM，并给出一些使用示例"}
     ]
     
     """ print("\n=== 测试1: 使用OpenAI（同步）===")
@@ -895,88 +922,55 @@ async def test_openai_sync_vs_async_comparison(logger=None):
             stream=True
         )
         
-        print("异步流式响应内容:")
-        collected_content = ""
-        parsed_text_content = ""  # 用于存储解析后的纯文本内容
-        chunk_count = 0
-        async for chunk in stream:
-            chunk_count += 1
-            print(f"\n[客户端] 📦 收到第{chunk_count}个流式块")
-            print(f"[客户端] 完整chunk对象: {chunk}")
-            if chunk.choices[0].delta.content is not None:
-                content = chunk.choices[0].delta.content
-                collected_content += content
-                print(f"[客户端]======原始内容: {content[:100]}...")
-                
-                # 解析SSE数据，提取实际文本内容
-                try:
-                    # 检查是否为SSE格式
-                    if content.startswith('data: '):
-                        # 移除 "data: " 前缀
-                        json_str = content[6:].strip()
-                        if json_str and json_str != '[DONE]':
-                            try:
-                                sse_data = json.loads(json_str)
-                                # 只处理text_chunk事件，提取增量文本
-                                if sse_data.get("event") == "text_chunk":
-                                    text_part = sse_data.get("data", {}).get("text", "")
-                                    if text_part:
-                                        # 在这里就解码Unicode转义字符
-                                        try:
-                                            decoded_text_part = json.loads(f'"{text_part}"')
-                                        except json.JSONDecodeError:
-                                            decoded_text_part = text_part  # 如果解码失败，使用原文本
-                                        
-                                        parsed_text_content += decoded_text_part
-                                        print(f"[客户端] 📝 解析出文本: {decoded_text_part}")
-                                        print(decoded_text_part, end="", flush=True)
-                                # 处理workflow_finished事件，但不重复添加文本
-                                elif sse_data.get("event") == "workflow_finished":
-                                    final_text = sse_data.get("data", {}).get("outputs", {}).get("text", "")
-                                    print(f"[客户端] 🏁 工作流完成，最终文本长度: {len(final_text)}")
-                                    # 如果通过text_chunk没有收集到任何文本，才使用最终文本
-                                    if not parsed_text_content and final_text:
-                                        # 同样解码Unicode转义字符
-                                        try:
-                                            decoded_final_text = json.loads(f'"{final_text}"')
-                                        except json.JSONDecodeError:
-                                            decoded_final_text = final_text
-                                        
-                                        parsed_text_content = decoded_final_text
-                                        print(f"[客户端] 📝 使用最终文本作为结果")
-                                # 忽略其他事件类型
-                                else:
-                                    print(f"[客户端] ℹ️  忽略事件: {sse_data.get('event', 'unknown')}")
-                            except json.JSONDecodeError:
-                                # JSON解析失败，可能是不完整的数据，跳过
-                                print(f"[客户端] ⚠️ JSON解析失败，跳过: {json_str[:50]}...")
-                    else:
-                        # 非SSE格式，严格过滤，只保留纯文本
-                        # 跳过包含JSON字段的内容
-                        if any(keyword in content for keyword in ['":', '{"', '"}', 'created_at', 'finished_at', 'parallel_id']):
-                            print(f"[客户端] ⚠️ 跳过JSON片段: {content[:50]}...")
-                        elif content.strip() and len(content.strip()) > 3:  # 只保留有意义的文本
-                            # 进一步检查是否为纯文本（包含中文字符或常见英文单词）
-                            has_chinese = any('\u4e00' <= char <= '\u9fff' for char in content)
-                            has_meaningful_english = any(word in content.lower() for word in ['litellm', 'api', 'model', 'text'])
-                            
-                            if has_chinese or has_meaningful_english:
-                                parsed_text_content += content
-                                print(f"[客户端] 📝 添加纯文本: {content[:30]}...")
-                                print(content, end="", flush=True)
-                            else:
-                                print(f"[客户端] ⚠️ 跳过无意义内容: {content[:30]}...")
-                        else:
-                            print(f"[客户端] ⚠️ 跳过短内容: {content}")
-                except Exception as e:
-                    print(f"[客户端] ⚠️ 解析异常: {str(e)}")
-                    # 解析失败时，不添加到解析内容中，避免污染结果
-            else:
-                print(f"[客户端] ⚠️  chunk.choices[0].delta.content 为 None")
+        print("\n=== 异步流式OpenAI客户端测试结果 ===")
+        print("流式响应内容:")
         
-        print(f"\n✅ 异步流式请求成功，原始内容长度: {len(collected_content)}")
-        print(f"📝 解析后的纯文本内容长度: {len(parsed_text_content)}")
-        print(f"📖 完整解析文本（已解码）: {parsed_text_content}")
+        collected_content = ""
+        try:
+            # 使用正确的异步流式处理方式
+            async for chunk in stream:
+                if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    collected_content += content
+                    print(content, end="", flush=True)
+                elif hasattr(chunk.choices[0], 'message') and chunk.choices[0].message.content is not None:
+                    content = chunk.choices[0].message.content
+                    collected_content += content
+                    print(content, end="", flush=True)
+        except TypeError as stream_error:
+            # 处理 'coroutine' object is not an iterator 错误
+            error_msg = f"异步流式处理失败（LiteLLM兼容性问题）: {str(stream_error)}"
+            print(f"\n⚠️ {error_msg}")
+            
+            # 尝试使用非流式模式作为备选方案
+            message = "🔄 尝试使用非流式模式作为备选方案..."
+            print(message)
+            
+            # 创建非流式请求参数
+            non_stream_params = {"model": model_name, "messages": test_messages, "stream": False}
+            
+            # 发起非流式请求
+            response = await async_client.chat.completions.create(**non_stream_params)
+            
+            if hasattr(response.choices[0], 'message') and response.choices[0].message.content:
+                content = response.choices[0].message.content
+                collected_content = content
+                print(f"📝 备选方案响应内容: {content}")
+            else:
+                error_msg = "备选方案也失败了"
+                print(f"❌ {error_msg}")
+                return False
+                
+        except Exception as stream_error:
+            error_msg = f"流式处理失败: {str(stream_error)}"
+            print(f"\n❌ {error_msg}")
+            return False
+        
+        print("\n")  # 换行
+        print("✅ 异步流式请求成功")
+        
+        # 打印收集到的完整内容
+        print(f"📝 完整响应内容: {json.dumps(collected_content, ensure_ascii=False, indent=4)}")
         
     except Exception as e:
         print(f"❌ 异步流式请求失败: {str(e)}")
