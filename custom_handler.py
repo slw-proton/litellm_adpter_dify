@@ -855,14 +855,7 @@ class MyCustomLLM(CustomLLM):
         elif sse_data.get("type") == "chunk":
             chunk_content = sse_data.get("chunk", "")
             if chunk_content:
-                # 如果chunk内容是JSON格式，直接返回JSON字符串
-                try:
-                    # 尝试解析JSON，如果成功说明是JSON格式
-                    json.loads(chunk_content)
-                    return chunk_content
-                except (json.JSONDecodeError, TypeError):
-                    # 如果不是JSON格式，直接返回原始内容
-                    return chunk_content
+                return chunk_content
         
         # 处理Dify的status事件（记录但不返回内容）
         elif sse_data.get("type") == "status":
