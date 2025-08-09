@@ -26,6 +26,16 @@ from litellm.types.utils import GenericStreamingChunk, ModelResponse
 # 设置日志
 logger = logging.getLogger(__name__)
 
+# 流式保存工具
+try:
+    from productAdapter.utils.dify_data_saver import (
+        start_dify_stream_saver,
+        DifyStreamingFileWriter,
+    )
+except Exception as _e:  # 兜底，避免导入失败导致运行中断
+    start_dify_stream_saver = None  # type: ignore
+    DifyStreamingFileWriter = None  # type: ignore
+
 class MyCustomLLM(CustomLLM):
     """
     自定义LLM处理器
@@ -37,6 +47,337 @@ class MyCustomLLM(CustomLLM):
         # 使用模拟SSE服务器进行测试
         self.api_base = "http://localhost:8002/api/process"
         print("[custom_handler] MyCustomLLM初始化完成 - 使用模拟SSE服务器")
+
+    # --- 流式保存封装 ---
+    def init_start_dify_stream_saver(
+        self,
+        query_messages: Any,
+        filename_prefix: str = "litellm_custom",
+        response_id: Optional[str] = None,
+        enable_stream_save: bool = True,
+    ) -> tuple[Optional[DifyStreamingFileWriter], bool, Optional[str]]:
+        """初始化并启动流式保存器，返回 (stream_saver, enable, response_id)。
+
+        - 当保存器不可用或失败时，返回 (None, False, None)。
+        - query_messages: 可为 messages 数组或简单字符串
+        """
+        if start_dify_stream_saver is None:
+            return None, False, None
+        try:
+            project_root = os.path.abspath(os.path.dirname(__file__))
+            rid = response_id or f"custom-{uuid.uuid4().hex[:10]}"
+            stream_saver, enabled = start_dify_stream_saver(
+                response_id=rid,
+                query=query_messages,
+                project_root=project_root,
+                filename_prefix=filename_prefix,
+                enable_stream_save=enable_stream_save,
+            )
+            logger.info(
+                f"[custom_handler] init_start_dify_stream_saver: enabled={enabled}, response_id={rid}, saver={stream_saver}"
+            )
+            return stream_saver, enabled, rid
+        except Exception as se:
+            logger.warning(f"[custom_handler] 启动流式保存器失败: {se}")
+            return None, False, None
+
+    def save_stream_chunk(
+        self,
+        stream_saver: Optional[DifyStreamingFileWriter],
+        enabled: bool,
+        data: Any,
+    ) -> None:
+        """边流边写入一段数据。"""
+        if not enabled or stream_saver is None:
+            return
+        try:
+            stream_saver.write(data if isinstance(data, str) else str(data))
+        except Exception:
+            pass
+
+    def finalize_stream_saver(
+        self,
+        stream_saver: Optional[DifyStreamingFileWriter],
+        enabled: bool,
+        chunk_count: int,
+        processing_time: float = 0.0,
+    ) -> None:
+        """安全收尾保存器。"""
+        try:
+            if enabled and stream_saver is not None:
+                stream_saver.set_final_stats(chunk_count=chunk_count, processing_time=processing_time)
+                stream_saver.close()
+        except Exception:
+            pass
+
+    async def _async_parse_standard_sse_to_generic_chunks(
+        self,
+        response,
+        stream_saver: Optional[DifyStreamingFileWriter],
+        enable_stream_save: bool,
+        stats: Optional[Dict[str, int]] = None,
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        """
+        解析标准SSE (data: ...\n\n)，提取JSON中的 data.outputs.text，并转换为 GenericStreamingChunk 逐条输出。
+
+        Args:
+            response: aiohttp.ClientResponse 对象
+            stream_saver: 日志保存器
+            enable_stream_save: 是否保存流日志
+            stats: 可选统计字典，包含 'chunk_count' 键用于回传计数
+        """
+        if stats is None:
+            stats = {"chunk_count": 0, "event_count": 0}
+
+        buffer = ""
+        previous_text_fragment: Optional[str] = None
+        seen_structured_chunk: bool = False
+        have_seen_non_snapshot_chunk: bool = False
+        full_snapshot_emitted: bool = False
+
+        def parse_sse_block(block: str) -> tuple[Optional[str], str]:
+            event_type: Optional[str] = None
+            data_lines: list[str] = []
+            for raw in block.splitlines():
+                if raw.startswith(":"):
+                    continue
+                if raw.startswith("event:"):
+                    event_type = raw[len("event:"):].strip() or None
+                elif raw.startswith("data:"):
+                    data_lines.append(raw[len("data:"):].lstrip())
+            return event_type, "\n".join(data_lines)
+
+        async for chunk in response.content.iter_chunked(1024):
+            if not chunk:
+                continue
+            try:
+                chunk_str = chunk.decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            buffer += chunk_str
+
+            # 按双换行拆分完整事件块
+            while "\n\n" in buffer:
+                block, buffer = buffer.split("\n\n", 1)
+                block = block.strip("\r\n")
+                if not block:
+                    continue
+
+                event_type, data_payload = parse_sse_block(block)
+
+                # 保存原始块（带 data 拼接后的内容）
+                self.save_stream_chunk(stream_saver, enable_stream_save, f"[block] event={event_type or 'message'}\n{block}\n\n")
+
+                # 统计事件数量（包含 ping / message / response 等）
+                stats["event_count"] = stats.get("event_count", 0) + 1
+
+                # 跳过 ping 或空数据
+                if event_type == "ping" or not data_payload.strip():
+                    continue
+
+                if data_payload.strip() == "[DONE]":
+                    final_chunk: GenericStreamingChunk = {
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "is_finished": True,
+                        "text": "",
+                        "tool_use": None,
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                    }
+                    yield final_chunk
+                    return
+
+                # 解析 JSON，兼容多种Dify格式，尽可能提取增量文本
+                try:
+                    payload = json.loads(data_payload)
+                except Exception:
+                    payload = data_payload  # 保留原始文本
+
+                # 无论是否处于 structured chunk 流，优先检测完成事件，避免卡死
+                try:
+                    if (event_type == "workflow_finished") or (
+                        isinstance(payload, dict) and (
+                            payload.get("event") == "workflow_finished" or payload.get("type") == "complete"
+                        )
+                    ):
+                        final_chunk: GenericStreamingChunk = {
+                            "finish_reason": "stop",
+                            "index": 0,
+                            "is_finished": True,
+                            "text": "",
+                            "tool_use": None,
+                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                        }
+                        yield final_chunk
+                        return
+                except Exception:
+                    pass
+
+                extracted_text: str = ""
+                try:
+                    if isinstance(payload, dict):
+                        # 优先直接透传 chunk 的原始字符串，避免内层JSON解析失败
+                        if "type" in payload and "chunk" in payload:
+                            inner_chunk = payload.get("chunk", "")
+                            if isinstance(inner_chunk, str) and inner_chunk:
+                                extracted_text = inner_chunk
+                                seen_structured_chunk = True
+                        # 当检测到 structured chunk 流时，避免同时再输出 text_chunk，防止重复累积导致上游解析出错
+                        if not extracted_text and not seen_structured_chunk:
+                            extracted_text = self._extract_text_from_sse_data(payload)
+                        if not extracted_text:
+                            extracted_text = (
+                                payload.get("data", {})
+                                .get("outputs", {})
+                                .get("text", "")
+                            )
+                    elif isinstance(payload, str):
+                        extracted_text = payload
+                except Exception:
+                    extracted_text = ""
+
+                if extracted_text == "__WORKFLOW_FINISHED__":
+                    final_chunk: GenericStreamingChunk = {
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "is_finished": True,
+                        "text": "",
+                        "tool_use": None,
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                    }
+                    yield final_chunk
+                    return
+
+                if isinstance(extracted_text, str) and extracted_text:
+                    stripped_text = extracted_text.strip()
+                    is_full_json_snapshot = stripped_text.startswith('{') and stripped_text.endswith('}')
+
+                    # 若已输出过增量片段，则丢弃后续完整快照，避免上游累积两份JSON
+                    if is_full_json_snapshot and have_seen_non_snapshot_chunk:
+                        continue
+                    # 完整快照只允许输出一次
+                    if is_full_json_snapshot and full_snapshot_emitted:
+                        continue
+                    # 去重（忽略纯空白差异）
+                    if previous_text_fragment is not None and stripped_text == previous_text_fragment.strip():
+                        continue
+
+                    previous_text_fragment = extracted_text
+                    if is_full_json_snapshot:
+                        full_snapshot_emitted = True
+                    else:
+                        have_seen_non_snapshot_chunk = True
+
+                    stats["chunk_count"] = stats.get("chunk_count", 0) + 1
+                    generic_streaming_chunk: GenericStreamingChunk = {
+                        "finish_reason": None,
+                        "index": 0,
+                        "is_finished": False,
+                        "text": extracted_text,
+                        "tool_use": None,
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                    }
+                    yield generic_streaming_chunk
+
+        # 处理连接结束后 buffer 中遗留的最后一块（若没有以空行结束）
+        tail = buffer.strip("\r\n")
+        if tail:
+            event_type, data_payload = parse_sse_block(tail)
+            self.save_stream_chunk(stream_saver, enable_stream_save, f"[tail-block] event={event_type or 'message'}\n{tail}\n")
+            stats["event_count"] = stats.get("event_count", 0) + 1
+            if data_payload.strip() and event_type != "ping":
+                if data_payload.strip() == "[DONE]":
+                    final_chunk: GenericStreamingChunk = {
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "is_finished": True,
+                        "text": "",
+                        "tool_use": None,
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                    }
+                    yield final_chunk
+                    return
+                try:
+                    payload = json.loads(data_payload)
+                except Exception:
+                    payload = data_payload
+                # 尾块也要优先检测完成事件，避免卡死
+                try:
+                    if (event_type == "workflow_finished") or (
+                        isinstance(payload, dict) and (
+                            payload.get("event") == "workflow_finished" or payload.get("type") == "complete"
+                        )
+                    ):
+                        final_chunk: GenericStreamingChunk = {
+                            "finish_reason": "stop",
+                            "index": 0,
+                            "is_finished": True,
+                            "text": "",
+                            "tool_use": None,
+                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                        }
+                        yield final_chunk
+                        return
+                except Exception:
+                    pass
+                extracted_text = ""
+                try:
+                    if isinstance(payload, dict):
+                        if "type" in payload and "chunk" in payload:
+                            inner_chunk = payload.get("chunk", "")
+                            if isinstance(inner_chunk, str) and inner_chunk:
+                                extracted_text = inner_chunk
+                                seen_structured_chunk = True
+                        if not extracted_text and not seen_structured_chunk:
+                            extracted_text = self._extract_text_from_sse_data(payload)
+                        if not extracted_text:
+                            extracted_text = (
+                                payload.get("data", {})
+                                .get("outputs", {})
+                                .get("text", "")
+                            )
+                    elif isinstance(payload, str):
+                        extracted_text = payload
+                except Exception:
+                    extracted_text = ""
+
+                if isinstance(extracted_text, str) and extracted_text:
+                    stripped_text = extracted_text.strip()
+                    is_full_json_snapshot = stripped_text.startswith('{') and stripped_text.endswith('}')
+                    if is_full_json_snapshot and have_seen_non_snapshot_chunk:
+                        pass
+                    elif is_full_json_snapshot and full_snapshot_emitted:
+                        pass
+                    elif previous_text_fragment is not None and stripped_text == previous_text_fragment.strip():
+                        pass
+                    else:
+                        previous_text_fragment = extracted_text
+                        if is_full_json_snapshot:
+                            full_snapshot_emitted = True
+                        else:
+                            have_seen_non_snapshot_chunk = True
+                        stats["chunk_count"] = stats.get("chunk_count", 0) + 1
+                        generic_streaming_chunk: GenericStreamingChunk = {
+                            "finish_reason": None,
+                            "index": 0,
+                            "is_finished": False,
+                            "text": extracted_text,
+                            "tool_use": None,
+                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                        }
+                        yield generic_streaming_chunk
+
+        # 结束兜底
+        final_chunk: GenericStreamingChunk = {
+            "finish_reason": "stop",
+            "index": 0,
+            "is_finished": True,
+            "text": "",
+            "tool_use": None,
+            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+        }
+        yield final_chunk
     
     def _extract_response_format(self, kwargs: dict, key: str = "response_format") -> tuple[Optional[Dict[str, Any]], str]:
         """
@@ -359,6 +700,14 @@ class MyCustomLLM(CustomLLM):
             }
             
             print(f"[custom_handler] 发送到业务API的同步流式请求: {json.dumps(business_request, ensure_ascii=False, indent=2)}")
+
+            # 启动流式保存器（封装）
+            stream_saver, enable_stream_save, _resp_id = self.init_start_dify_stream_saver(
+                query_messages=messages,
+                filename_prefix="litellm_custom",
+                response_id=f"custom-sync-{uuid.uuid4().hex[:10]}",
+                enable_stream_save=True,
+            )
             
             # 使用requests进行同步请求
             import requests
@@ -379,6 +728,8 @@ class MyCustomLLM(CustomLLM):
                         if line:
                             chunk_count += 1
                             print(f"[custom_handler] 🔄 STREAMING 第{chunk_count}个数据块: {line[:100]}...")
+                                # 边流边保存原始SSE行
+                            self.save_stream_chunk(stream_saver, enable_stream_save, line)
                             
                             # 解析SSE数据
                             if line.startswith('data: '):
@@ -558,19 +909,28 @@ class MyCustomLLM(CustomLLM):
                 yield error_chunk
                 
         except Exception as e:
-            error_msg = f"同步流式处理失败: {str(e)}"
-            print(f"❌ [custom_handler] {error_msg}")
-            logger.error(f"❌ [custom_handler] {error_msg}")
-            # 发送错误块
-            error_chunk: GenericStreamingChunk = {
-                "finish_reason": "stop",
-                "index": 0,
-                "is_finished": True,
-                "text": f"处理失败: {error_msg}",
-                "tool_use": None,
-                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-            }
-            yield error_chunk
+            err_text = f"同步流式处理失败: {e}"
+            print(f"❌ [custom_handler] {err_text}")
+            logger.error(f"❌ [custom_handler] {err_text}")
+        finally:
+            # 收尾保存器
+            try:
+                if enable_stream_save and stream_saver is not None:
+                    stream_saver.set_final_stats(chunk_count=locals().get('chunk_count', 0), processing_time=0.0)
+                    stream_saver.close()
+            except Exception:
+                pass
+            # 仅在异常路径上发送错误块
+            if 'err_text' in locals():
+                error_chunk: GenericStreamingChunk = {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "is_finished": True,
+                    "text": err_text,
+                    "tool_use": None,
+                    "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                }
+                yield error_chunk
 
     async def astreaming(self, *args, **kwargs) -> AsyncIterator[GenericStreamingChunk]:
         """
@@ -613,6 +973,14 @@ class MyCustomLLM(CustomLLM):
             }
             
             print(f"[custom_handler] 发送到业务API的异步流式请求: {json.dumps(business_request, ensure_ascii=False, indent=2)}")
+
+            # 启动流式保存器（封装）
+            stream_saver, enable_stream_save, _resp_id = self.init_start_dify_stream_saver(
+                query_messages=messages,
+                filename_prefix="litellm_custom",
+                response_id=f"custom-async-{uuid.uuid4().hex[:10]}",
+                enable_stream_save=True,
+            )
             
             # 使用aiohttp进行异步请求
             import aiohttp
@@ -627,163 +995,15 @@ class MyCustomLLM(CustomLLM):
                     ) as response:
                         
                         if response.status == 200:
-                            # 处理流式响应 - 保持即时处理
-                            chunk_count = 0
-                            
-                            print(f"[custom_handler] 🔄 开始异步流式读取响应...")
-                            
-                            # 使用较小的chunk size提高实时性，但保持即时处理
-                            async for chunk in response.content.iter_chunked(256):
-                                if chunk:
-                                    chunk_count += 1
-                                    # 解码字节为字符串
-                                    chunk_str = chunk.decode('utf-8', errors='ignore')
-                                    print(f"[custom_handler] 🔄 ASYNC_STREAMING 第{chunk_count}个网络块 (大小: {len(chunk)}字节): {chunk_str[:200]}...")
-                                    
-                                    # 按行分割并立即处理每个SSE行 - 保持即时处理
-                                    lines = chunk_str.split('\n')
-                                    for line in lines:
-                                        line_str = line.strip()
-                                        if line_str and line_str.startswith('data: '):
-                                            try:
-                                                # 移除 "data: " 前缀
-                                                data_content = line_str[6:].strip()
-                                                
-                                                if data_content == '[DONE]':
-                                                    print(f"[custom_handler] 🏁 ASYNC_STREAMING 流结束信号")
-                                                    final_chunk: GenericStreamingChunk = {
-                                                        "finish_reason": "stop",
-                                                        "index": 0,
-                                                        "is_finished": True,
-                                                        "text": "",
-                                                        "tool_use": None,
-                                                        "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                    }
-                                                    yield final_chunk
-                                                    return
-                                                
-                                                # 解析JSON数据
-                                                outer_data = json.loads(data_content)
-                                                
-                                                # 处理Dify的嵌套格式
-                                                if isinstance(outer_data, dict) and "type" in outer_data and "chunk" in outer_data:
-                                                    chunk_content = outer_data.get("chunk", "")
-                                                    if chunk_content:
-                                                        try:
-                                                            inner_data = json.loads(chunk_content)
-                                                            text_content = self._extract_text_from_sse_data(inner_data)
-                                                        except json.JSONDecodeError:
-                                                            # 尝试修复单引号格式
-                                                            chunk_content_fixed = chunk_content.replace("'", '"')
-                                                            try:
-                                                                inner_data = json.loads(chunk_content_fixed)
-                                                                text_content = self._extract_text_from_sse_data(inner_data)
-                                                            except:
-                                                                text_content = ""
-                                                        
-                                                        if text_content == "__WORKFLOW_FINISHED__":
-                                                            print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成")
-                                                            final_chunk: GenericStreamingChunk = {
-                                                                "finish_reason": "stop",
-                                                                "index": 0,
-                                                                "is_finished": True,
-                                                                "text": "",
-                                                                "tool_use": None,
-                                                                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                            }
-                                                            yield final_chunk
-                                                            return
-                                                        elif text_content:
-                                                            print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding text_chunk内容: {text_content[:50]}...")
-                                                            generic_streaming_chunk: GenericStreamingChunk = {
-                                                                "finish_reason": None,
-                                                                "index": 0,
-                                                                "is_finished": False,
-                                                                "text": text_content,
-                                                                "tool_use": None,
-                                                                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                            }
-                                                            yield generic_streaming_chunk
-                                                        else:
-                                                            print(f"[custom_handler] ⚠️ ASYNC_STREAMING text_chunk内容为空，跳过")
-                                                
-                                                # 处理Dify的直接事件格式
-                                                elif isinstance(outer_data, dict) and "type" in outer_data:
-                                                    print(f"[custom_handler] 🔍 ASYNC_STREAMING 处理直接事件: {outer_data.get('type')}")
-                                                    text_content = self._extract_text_from_sse_data(outer_data)
-                                                    if text_content == "__WORKFLOW_FINISHED__":
-                                                        print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成(直接事件)")
-                                                        final_chunk: GenericStreamingChunk = {
-                                                            "finish_reason": "stop",
-                                                            "index": 0,
-                                                            "is_finished": True,
-                                                            "text": "",
-                                                            "tool_use": None,
-                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                        }
-                                                        yield final_chunk
-                                                        return
-                                                    elif text_content:
-                                                        print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding直接事件内容: {text_content[:50]}...")
-                                                        generic_streaming_chunk: GenericStreamingChunk = {
-                                                            "finish_reason": None,
-                                                            "index": 0,
-                                                            "is_finished": False,
-                                                            "text": text_content,
-                                                            "tool_use": None,
-                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                        }
-                                                        yield generic_streaming_chunk
-                                                    else:
-                                                        print(f"[custom_handler] ⚠️ ASYNC_STREAMING 直接事件内容为空，跳过")
-                                                
-                                                # 处理其他格式
-                                                else:
-                                                    text_content = self._extract_text_from_sse_data(outer_data)
-                                                    if text_content == "__WORKFLOW_FINISHED__":
-                                                        print(f"[custom_handler] 🏁 ASYNC_STREAMING 工作流完成(直接格式)")
-                                                        final_chunk: GenericStreamingChunk = {
-                                                            "finish_reason": "stop",
-                                                            "index": 0,
-                                                            "is_finished": True,
-                                                            "text": "",
-                                                            "tool_use": None,
-                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                        }
-                                                        yield final_chunk
-                                                        return
-                                                    elif text_content:
-                                                        print(f"[custom_handler] 📤 ASYNC_STREAMING Yielding直接内容: {text_content[:50]}...")
-                                                        generic_streaming_chunk: GenericStreamingChunk = {
-                                                            "finish_reason": None,
-                                                            "index": 0,
-                                                            "is_finished": False,
-                                                            "text": text_content,
-                                                            "tool_use": None,
-                                                            "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                                                        }
-                                                        yield generic_streaming_chunk
-                                            
-                                            except json.JSONDecodeError as e:
-                                                # JSON解析失败，可能是部分数据或其他格式
-                                                print(f"[custom_handler] ⚠️ JSON解析失败: {str(e)}, 原始内容: {data_content[:100]}...")
-                                                continue
-                                            except Exception as e:
-                                                # 如果整体解析失败，记录错误但继续处理
-                                                print(f"[custom_handler] ⚠️ SSE解析异常: {str(e)}, 行内容: {line_str[:100]}...")
-                                                continue
-                            
-                            # 确保发送完成信号
-                            print(f"[custom_handler] 🏁 ASYNC_STREAMING 发送最终完成信号，总共处理了{chunk_count}个数据块")
-                            final_chunk: GenericStreamingChunk = {
-                                "finish_reason": "stop",
-                                "index": 0,
-                                "is_finished": True,
-                                "text": "",
-                                "tool_use": None,
-                                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-                            }
-                            yield final_chunk
+                            # 提取为独立方法，提升可读性与复用性
+                            stats: Dict[str, int] = {"chunk_count": 0}
+                            async for generic_chunk in self._async_parse_standard_sse_to_generic_chunks(
+                                response=response,
+                                stream_saver=stream_saver,
+                                enable_stream_save=enable_stream_save,
+                                stats=stats,
+                            ):
+                                yield generic_chunk
                         else:
                             error_text = await response.text()
                             print(f"[custom_handler] 业务API返回错误: {response.status} - {error_text}")
@@ -813,19 +1033,31 @@ class MyCustomLLM(CustomLLM):
                 yield error_chunk
                 
         except Exception as e:
-            error_msg = f"异步流式处理失败: {str(e)}"
-            print(f"❌ [custom_handler] {error_msg}")
-            logger.error(f"❌ [custom_handler] {error_msg}")
-            # 发送错误块
-            error_chunk: GenericStreamingChunk = {
-                "finish_reason": "stop",
-                "index": 0,
-                "is_finished": True,
-                "text": f"处理失败: {error_msg}",
-                "tool_use": None,
-                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
-            }
-            yield error_chunk
+            err_text = f"异步流式处理失败: {e}"
+            print(f"❌ [custom_handler] {err_text}")
+            logger.error(f"❌ [custom_handler] {err_text}")
+        finally:
+            # 收尾保存器
+            try:
+                if enable_stream_save and stream_saver is not None:
+                    # 优先使用统计字典中的chunk_count
+                    _stats = locals().get('stats', {}) if isinstance(locals().get('stats', {}), dict) else {}
+                    final_count = _stats.get('chunk_count', 0)
+                    stream_saver.set_final_stats(chunk_count=final_count, processing_time=0.0)
+                    stream_saver.close()
+            except Exception:
+                pass
+            # 仅在异常路径上发送错误块
+            if 'err_text' in locals():
+                error_chunk: GenericStreamingChunk = {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "is_finished": True,
+                    "text": err_text,
+                    "tool_use": None,
+                    "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+                }
+                yield error_chunk
 
     def _extract_text_from_sse_data(self, sse_data: dict) -> str:
         """

@@ -18,15 +18,11 @@ from typing import Dict, List, Any, Optional, Union, Generator
 # 添加项目根目录到系统路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-# 导入日志配置
-try:
-    from productAdapter.utils.logging_config import setup_logging
-    # 设置日志记录器
-    logger = setup_logging("litellm_adapter", logging.INFO)
-except ImportError:
-    # 如果找不到logging_config模块，则使用内置的logger模块
-    from liteLLMAdapter.logger import get_logger
-    logger = get_logger("adapter")
+# 统一日志配置
+from productAdapter.utils.unified_logging import setup_unified_logging
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+setup_unified_logging(project_root)
+logger = logging.getLogger("litellm_adapter")
 
 class LiteLLMAdapter:
     """LiteLLM适配器类"""

@@ -19,20 +19,11 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# 导入项目内部模块
-try:
-    from productAdapter.utils.logging_init import init_logger_with_env_loader
-    # 使用统一的日志配置
-    logger = init_logger_with_env_loader("dify_workflow_client", project_root)
-except ImportError:
-    # 如果导入失败，使用默认日志配置
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+from productAdapter.utils.unified_logging import setup_unified_logging
+
+# 统一日志，获取模块logger
+setup_unified_logging(project_root)
+logger = logging.getLogger("dify_workflow_client")
 
 class DifyWorkflowClient:
     """
@@ -673,15 +664,23 @@ class DifyWorkflowClient:
                         
                         # 直接转发Dify的SSE数据
                         chunk_count = 0
-                        for line in response.iter_lines(decode_unicode=True):
-                            if line:
-                                chunk_count += 1
-                                print(f"[dify_workflow_client] 🔄 第{chunk_count}个数据块: {json.dumps(line, ensure_ascii=True, indent=2)}")
-                                # 直接返回Dify的原始数据
-                                # print(f"[dify_workflow_client] 📤 Yielding 第{chunk_count}个chunk")
-                                yield line
+                        # 按SSE事件分隔（以"\n\n"作为分隔符），先以字节读取再按编码解码，最后补回事件结束的双换行
+                        encoding = response.encoding or "utf-8"
+                        for event in response.iter_lines(decode_unicode=False, delimiter=b"\n\n"):
+                            if not event:
+                                continue
+                            try:
+                                decoded_event = event.decode(encoding, errors="replace")
+                            except Exception:
+                                decoded_event = event.decode("utf-8", errors="replace")
+                            chunk_count += 1
+                            logger.debug(
+                                f"[dify_workflow_client] 🔄 第{chunk_count}个事件: {json.dumps(decoded_event, ensure_ascii=True, indent=2)}"
+                            )
+                            # 还原SSE事件结束的分隔符，确保下游收到 "...\n\n"
+                            yield f"{decoded_event}\n\n"
                         
-                        print(f"[dify_workflow_client] 🏁 总共处理了{chunk_count}个数据块")
+                        logger.info(f"[dify_workflow_client] 🏁 总共处理了{chunk_count}个数据块")
                         break  # 成功，跳出重试循环
                     else:
                         error_msg = f"Dify API错误: {response.status_code} - {response.text}"
