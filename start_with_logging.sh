@@ -62,40 +62,20 @@ setup_environment() {
     export LITELLM_SET_VERBOSE=true
     export PYTHON_LOG_LEVEL=DEBUG
     export PYTHONUNBUFFERED=1
-    export LITELLM_LOG_LEVEL=INFO
+    export LITELLM_LOG_LEVEL=DEBUG
     export PYTHONPATH="${PYTHONPATH}:."
+    export LOG_LEVEL=DEBUG
     
     print_success "环境变量设置完成"
 }
 
-# 配置Python日志
+# 配置Python日志（完全代码化，忽略logging.yaml）
 setup_python_logging() {
-    print_info "配置Python日志..."
-    
-    if [ -f "logging.yaml" ]; then
-        print_info "使用logging.yaml配置Python日志"
-        python -c "
-import logging.config
-import yaml
-try:
-    with open('logging.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-        print('YAML配置加载完成')
-        # 检查配置完整性
-        if config and 'loggers' in config and config['loggers'] is not None:
-            logging.config.dictConfig(config)
-            print('✅ Python日志配置加载成功')
-        else:
-            print('⚠️ logging.yaml配置不完整，使用基础配置')
-            logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-except Exception as e:
-    print(f'❌ 日志配置加载失败: {e}')
-    print('使用基础日志配置')
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-" || print_warning "日志配置出错，继续启动..."
-    else
-        print_warning "logging.yaml文件不存在，使用默认配置"
-    fi
+    print_info "配置Python日志（代码化）..."
+    python - <<'PYCODE'
+import logging
+print('使用代码化日志配置（logging_config）')
+PYCODE
 }
 
 # 检查服务是否运行
