@@ -19,13 +19,10 @@ def test_process_query_with_config_method():
     print("=== 测试process_query_with_config方法 ===")
     
     try:
-        from dify_workflow_client import DifyWorkflowClient
+        from productAdapter.api.dify_workflow_client import DifyWorkflowClient
     except ImportError:
-        try:
-            from productAdapter.api.dify_workflow_client import DifyWorkflowClient
-        except ImportError:
-            print("❌ 无法导入DifyWorkflowClient")
-            return False
+        print("❌ 无法导入DifyWorkflowClient")
+        return False
     
     # 测试方法存在
     if hasattr(DifyWorkflowClient, 'process_query_with_config'):
@@ -38,7 +35,7 @@ def test_process_query_with_config_method():
     import inspect
     sig = inspect.signature(DifyWorkflowClient.process_query_with_config)
     params = list(sig.parameters.keys())
-    expected_params = ['query', 'api_key', 'base_url', 'workflow_id', 'response_mode']
+    expected_params = ['query', 'api_key', 'base_url', 'workflow_id']
     
     for param in expected_params:
         if param in params:
@@ -55,13 +52,10 @@ def test_process_query_with_config_functionality():
     print("\n=== 测试process_query_with_config功能 ===")
     
     try:
-        from dify_workflow_client import DifyWorkflowClient
+        from productAdapter.api.dify_workflow_client import DifyWorkflowClient
     except ImportError:
-        try:
-            from productAdapter.api.dify_workflow_client import DifyWorkflowClient
-        except ImportError:
-            print("❌ 无法导入DifyWorkflowClient")
-            return False
+        print("❌ 无法导入DifyWorkflowClient")
+        return False
     
     # 测试1: 空查询
     print("测试1: 空查询")
@@ -82,6 +76,15 @@ def test_process_query_with_config_functionality():
         del os.environ["DIFY_API_KEY"]
     if "DIFY_WORKFLOW_ID" in os.environ:
         del os.environ["DIFY_WORKFLOW_ID"]
+
+    # 重置类级缓存，确保重新从环境变量加载
+    try:
+        from productAdapter.api.dify_workflow_client import DifyWorkflowClient as _ClientForReset
+        _ClientForReset._api_key = None
+        _ClientForReset._base_url = None
+        _ClientForReset._workflow_id = None
+    except Exception:
+        pass
     
     result = DifyWorkflowClient.process_query_with_config("测试查询")
     if not result["success"] and "Dify配置不完整" in result["content"]:
@@ -129,4 +132,5 @@ def main():
 
 if __name__ == "__main__":
     success = main()
-    sys.exit(0 if success else 1) 
+    sys.exit(0 if success else 1)
+

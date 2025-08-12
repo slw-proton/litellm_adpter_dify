@@ -19,13 +19,10 @@ def test_process_query_method():
     print("=== 测试process_query方法 ===")
     
     try:
-        from dify_workflow_client import DifyWorkflowClient
+        from productAdapter.api.dify_workflow_client import DifyWorkflowClient
     except ImportError:
-        try:
-            from productAdapter.api.dify_workflow_client import DifyWorkflowClient
-        except ImportError:
-            print("❌ 无法导入DifyWorkflowClient")
-            return False
+        print("❌ 无法导入DifyWorkflowClient")
+        return False
     
     # 测试初始化
     try:
@@ -46,7 +43,7 @@ def test_process_query_method():
     import inspect
     sig = inspect.signature(client.process_query)
     params = list(sig.parameters.keys())
-    expected_params = ['query', 'workflow_id', 'response_mode']
+    expected_params = ['query', 'workflow_id']
     
     for param in expected_params:
         if param in params:
@@ -63,13 +60,10 @@ def test_process_query_return_format():
     print("\n=== 测试process_query返回格式 ===")
     
     try:
-        from dify_workflow_client import DifyWorkflowClient
+        from productAdapter.api.dify_workflow_client import DifyWorkflowClient
     except ImportError:
-        try:
-            from productAdapter.api.dify_workflow_client import DifyWorkflowClient
-        except ImportError:
-            print("❌ 无法导入DifyWorkflowClient")
-            return False
+        print("❌ 无法导入DifyWorkflowClient")
+        return False
     
     client = DifyWorkflowClient(api_key="test_key")
     
@@ -119,4 +113,5 @@ def main():
 
 if __name__ == "__main__":
     success = main()
-    sys.exit(0 if success else 1) 
+    sys.exit(0 if success else 1)
+
