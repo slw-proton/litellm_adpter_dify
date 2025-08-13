@@ -43,7 +43,7 @@ def stream_and_save_sse(url: str, payload: dict, output_prefix: str = "dify_curl
             f.write(f"# curl流式抓取 - {timestamp}\n")
             f.write(f"# URL: {url}\n")
             f.write("=" * 50 + "\n\n")
-            for line in resp.iter_lines(decode_unicode=True, chunk_size=1):
+            for line in resp.iter_lines(decode_unicode=True, chunk_size=1024):
                 if not line:
                     continue
                 chunk_count += 1

@@ -21,7 +21,11 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 # 导入LiteLLM相关模块
 import litellm
 from litellm import CustomLLM, completion, get_llm_provider
-from litellm.types.utils import GenericStreamingChunk, ModelResponse
+from litellm.types.utils import GenericStreamingChunk, ModelResponse, ImageResponse, ImageObject
+from productAdapter.api.image_handler import (
+    image_generation_via_business_api,
+    aimage_generation_via_business_api,
+)
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -46,6 +50,8 @@ class MyCustomLLM(CustomLLM):
         super().__init__()
         # 使用模拟SSE服务器进行测试
         self.api_base = "http://localhost:8002/api/process"
+        # 图片生成业务API
+        self.image_api = "http://localhost:8002/api/generate_image"
         print("[custom_handler] MyCustomLLM初始化完成 - 使用模拟SSE服务器")
 
     # --- 流式保存封装 ---
@@ -378,6 +384,102 @@ class MyCustomLLM(CustomLLM):
             "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
         }
         yield final_chunk
+
+    async def _async_merge_generic_chunks(
+        self,
+        source: AsyncIterator[GenericStreamingChunk],
+        *,
+        flush_interval_ms: int = 80,
+        min_batch_chunks: int = 3,
+        max_batch_chunks: int = 20,
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        """
+        对上游的 GenericStreamingChunk 进行合并/节流：
+        - 累积 text 片段，达到数量上限或时间窗到期（且已达最小批量）时一次输出
+        - 收到 is_finished=True 的最终块前，先 flush 残留再转发最终块
+        """
+        pending_text_parts: list[str] = []
+        last_flush_time = time.time()
+        flush_interval_seconds = max(0.0, float(flush_interval_ms) / 1000.0)
+
+        def build_chunk(text: str) -> GenericStreamingChunk:
+            return {
+                "finish_reason": None,
+                "index": 0,
+                "is_finished": False,
+                "text": text,
+                "tool_use": None,
+                "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
+            }
+
+        def maybe_flush(force: bool = False) -> Optional[GenericStreamingChunk]:
+            nonlocal pending_text_parts, last_flush_time
+            if not pending_text_parts:
+                return None
+            now = time.time()
+            time_due = (now - last_flush_time) >= flush_interval_seconds
+            count_due = len(pending_text_parts) >= max_batch_chunks
+            min_ready = len(pending_text_parts) >= min_batch_chunks
+            if force or count_due or (time_due and min_ready):
+                merged_text = "".join(pending_text_parts)
+                pending_text_parts = []
+                last_flush_time = now
+                # 打印一次观测日志（可选）
+                try:
+                    print(f"[custom_handler] 🚀 merge flush: size={len(merged_text)} bytes")
+                except Exception:
+                    pass
+                return build_chunk(merged_text)
+            return None
+
+        async for chunk in source:
+            try:
+                if chunk.get("is_finished"):
+                    flushed = maybe_flush(force=True)
+                    if flushed is not None:
+                        yield flushed
+                    yield chunk
+                    return
+                text_part = chunk.get("text") or ""
+                if isinstance(text_part, str) and text_part:
+                    pending_text_parts.append(text_part)
+                    flushed = maybe_flush(force=False)
+                    if flushed is not None:
+                        yield flushed
+            except Exception:
+                # 出现异常时直接透传原始块
+                yield chunk
+
+        # 源结束后，收尾flush
+        flushed = maybe_flush(force=True)
+        if flushed is not None:
+            yield flushed
+
+    def _get_stream_merge_config(self) -> dict:
+        """
+        读取并返回流式合并/节流配置。
+        返回字段：
+          - flush_interval_ms: 批量时间窗（毫秒）
+          - min_batch_chunks: 触发时间窗flush时的最小合并条数
+          - max_batch_chunks: 达到该数量立刻flush
+        """
+        try:
+            flush_interval_ms = int(os.getenv("LITELLM_STREAM_FLUSH_INTERVAL_MS", "80"))
+        except Exception:
+            flush_interval_ms = 80
+        try:
+            max_batch_chunks = int(os.getenv("LITELLM_STREAM_MAX_BATCH_CHUNKS", "20"))
+        except Exception:
+            max_batch_chunks = 20
+        try:
+            min_batch_chunks = int(os.getenv("LITELLM_STREAM_MIN_BATCH_CHUNKS", "3"))
+        except Exception:
+            min_batch_chunks = 3
+        return {
+            "flush_interval_ms": flush_interval_ms,
+            "min_batch_chunks": min_batch_chunks,
+            "max_batch_chunks": max_batch_chunks,
+        }
     
     def _extract_response_format(self, kwargs: dict, key: str = "response_format") -> tuple[Optional[Dict[str, Any]], str]:
         """
@@ -438,6 +540,72 @@ class MyCustomLLM(CustomLLM):
                     print(f"[custom_handler] 设置响应类型为JSON object")
         
         return extracted_value, response_type
+
+    # --- 图片生成（同步） ---
+    def image_generation(self, *args, **kwargs) -> ImageResponse:
+        """
+        同步图片生成，通过业务API `/api/generate_image` 调用，返回 LiteLLM 的 ImageResponse。
+        兼容 url / b64_json 两种返回格式。
+        """
+        try:
+            # 解析参数
+            model = kwargs.get("model", "business-api-image")
+            prompt = kwargs.get("prompt") or (args[1] if len(args) > 1 else None)
+            n = int(kwargs.get("n", 1))
+            size = kwargs.get("size", "1024x1024")
+            response_format = kwargs.get("response_format", "url")
+
+            if not prompt:
+                raise ValueError("prompt 不能为空")
+
+            return image_generation_via_business_api(
+                self.image_api,
+                model=model,
+                prompt=prompt,
+                n=n,
+                size=size,
+                response_format=response_format,
+            )
+
+        except Exception as e:
+            print(f"[custom_handler] 处理image_generation时出错: {e}")
+            return ImageResponse(
+                created=int(time.time()),
+                data=[ImageObject(url="https://picsum.photos/1024/1024?error=1")],
+            )
+
+    # --- 图片生成（异步） ---
+    async def aimage_generation(self, *args, **kwargs) -> ImageResponse:
+        """
+        异步图片生成，通过业务API `/api/generate_image` 调用，返回 LiteLLM 的 ImageResponse。
+        兼容 url / b64_json 两种返回格式。
+        """
+        try:
+            # 解析参数
+            model = kwargs.get("model", "business-api-image")
+            prompt = kwargs.get("prompt") or (args[1] if len(args) > 1 else None)
+            n = int(kwargs.get("n", 1))
+            size = kwargs.get("size", "1024x1024")
+            response_format = kwargs.get("response_format", "url")
+
+            if not prompt:
+                raise ValueError("prompt 不能为空")
+
+            return await aimage_generation_via_business_api(
+                self.image_api,
+                model=model,
+                prompt=prompt,
+                n=n,
+                size=size,
+                response_format=response_format,
+            )
+
+        except Exception as e:
+            print(f"[custom_handler] 处理aimage_generation时出错: {e}")
+            return ImageResponse(
+                created=int(time.time()),
+                data=[ImageObject(url="https://picsum.photos/1024/1024?error=1")],
+            )
     
     def completion(self, *args, **kwargs) -> litellm.ModelResponse:
         """
@@ -724,7 +892,7 @@ class MyCustomLLM(CustomLLM):
                 if response.status_code == 200:
                     # 处理流式响应 - 逐个返回每个SSE数据块
                     chunk_count = 0
-                    for line in response.iter_lines(decode_unicode=True):
+                    for line in response.iter_lines(chunk_size=1024,decode_unicode=True):
                         if line:
                             chunk_count += 1
                             print(f"[custom_handler] 🔄 STREAMING 第{chunk_count}个数据块: {line[:100]}...")
@@ -996,14 +1164,26 @@ class MyCustomLLM(CustomLLM):
                         
                         if response.status == 200:
                             # 提取为独立方法，提升可读性与复用性
-                            stats: Dict[str, int] = {"chunk_count": 0}
-                            async for generic_chunk in self._async_parse_standard_sse_to_generic_chunks(
+                            stats: Dict[str, int] = {"chunk_count": 0, "merged_batches": 0}
+                            # 合并/节流配置（函数化）
+                            merge_cfg = self._get_stream_merge_config()
+                            flush_interval_ms = merge_cfg["flush_interval_ms"]
+                            min_batch_chunks = merge_cfg["min_batch_chunks"]
+                            max_batch_chunks = merge_cfg["max_batch_chunks"]
+
+                            source_iter = self._async_parse_standard_sse_to_generic_chunks(
                                 response=response,
                                 stream_saver=stream_saver,
                                 enable_stream_save=enable_stream_save,
                                 stats=stats,
+                            )
+                            async for merged_chunk in self._async_merge_generic_chunks(
+                                source_iter,
+                                flush_interval_ms=flush_interval_ms,
+                                min_batch_chunks=min_batch_chunks,
+                                max_batch_chunks=max_batch_chunks,
                             ):
-                                yield generic_chunk
+                                yield merged_chunk
                         else:
                             error_text = await response.text()
                             print(f"[custom_handler] 业务API返回错误: {response.status} - {error_text}")

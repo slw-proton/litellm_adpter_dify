@@ -1,0 +1,32 @@
+ARG PYTHON_IMAGE=python:3.11-slim
+FROM ${PYTHON_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# 系统依赖（一次性）
+# - 构建工具链：build-essential, gcc, g++, make
+# - Java 头文件：openjdk-17-jdk-headless（供 pyjnius 编译 JNI）
+# - Python 头文件：python3-dev
+# - Cython：构建 pyjnius 需要
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# 为 pyjnius 配置 JAVA_HOME
+# 不再需要 JAVA_HOME（已移除 jnius 依赖）
+
+# 仅复制依赖清单，构建基础层
+COPY requirements.txt /app/requirements.txt
+# 先升级构建链，提升兼容性
+RUN pip install --no-cache-dir -U pip setuptools wheel && \
+    pip install --no-cache-dir -r /app/requirements.txt
+
+# 标记镜像元数据
+LABEL org.opencontainers.image.title="trae-litellm-base" \
+      org.opencontainers.image.description="Base image with pinned Python deps for trae-litellm" \
+      org.opencontainers.image.source="https://example.local/trae-litellm"
+
+
