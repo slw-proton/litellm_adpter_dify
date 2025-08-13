@@ -1,0 +1,9 @@
+{
+  "text": "{\"model\": \"doubao-seedream-3-0-t2i-250415\", \"created\": 1754996357, \"data\": [{\"url\": \"https://example.com/test-image.jpeg\"}], \"usage\": {\"generated_images\": 1, \"output_tokens\": 4096, \"total_tokens\": 4096}}",
+  "files": [],
+  "json": [
+    {
+      "data": []
+    }
+  ]
+}

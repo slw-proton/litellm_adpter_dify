@@ -1,0 +1,43 @@
+version: "3.9"
+services:
+  dify-openai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dify-openai:latest
+    container_name: dify-openai
+    working_dir: /app
+    ports:
+      - "18002:8002"   # Business API
+      - "18080:8080"   # LiteLLM Proxy
+    environment:
+      - LOG_LEVEL=DEBUG
+      - LITELLM_LOG_LEVEL=DEBUG
+      - LITELLM_LOG=DEBUG
+      - LITELLM_SET_VERBOSE=true
+      - LITE_LLM_DISABLE_CHECKS=True
+      - BUSINESS_API_HOST=0.0.0.0
+      - BUSINESS_API_PORT=8002  
+      - WORKSPACE=/app
+      - PYTHONPATH=/app
+      # ---- LiteLLM 自定义流控 ----
+      - LITELLM_STREAM_FLUSH_INTERVAL_MS=80
+      - LITELLM_STREAM_MIN_BATCH_CHUNKS=3
+      - LITELLM_STREAM_MAX_BATCH_CHUNKS=20
+      # ---- 其他 ----
+      - ENVIRONMENT=production
+      - DIFY_ENABLE_STREAM_SAVE=0
+      - DEFAULT_MODEL=my-custom-model
+      - LITELLM_PROXY_HOST=0.0.0.0
+      - LITELLM_PROXY_PORT=8080
+      - BUSINESS_API_BASE_URL=http://0.0.0.0:8002 
+    volumes:
+      - ./logs/docker:/var/log/trae-litellm
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://0.0.0.0:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+

@@ -35,6 +35,7 @@ class DifyWorkflowClient:
     _api_key = None
     _base_url = None
     _workflow_id = None
+    _timeout_seconds = None
     
     @classmethod
     def _load_config(cls):
@@ -45,6 +46,12 @@ class DifyWorkflowClient:
             cls._base_url = os.getenv("DIFY_BASE_URL", "https://api.dify.ai/v1")
         if cls._workflow_id is None:
             cls._workflow_id = os.getenv("DIFY_WORKFLOW_ID", "")
+        if cls._timeout_seconds is None:
+            # 统一的Dify请求超时时间（单位：秒），默认120秒
+            try:
+                cls._timeout_seconds = int(os.getenv("DIFY_TIMEOUT_SECONDS", "120"))
+            except Exception:
+                cls._timeout_seconds = 120
     
     def __init__(self, api_key: str = None, base_url: str = None, workflow_id: str = None):
         """
@@ -62,6 +69,7 @@ class DifyWorkflowClient:
         self.api_key = api_key or self._api_key
         self.base_url = (base_url or self._base_url).rstrip('/')
         self.workflow_id = workflow_id or self._workflow_id
+        self.timeout_seconds = self._timeout_seconds
         
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',
@@ -101,7 +109,7 @@ class DifyWorkflowClient:
         
         try:
             logger.info(f"🚀 发送POST请求到Dify API...")
-            response = requests.post(url, headers=self.headers, json=payload, timeout=30)
+            response = requests.post(url, headers=self.headers, json=payload, timeout=self.timeout_seconds)
             
             logger.info(f"📊 收到响应: 状态码={response.status_code}")
             
@@ -157,7 +165,7 @@ class DifyWorkflowClient:
         try:
             logger.info(f"🚀 发送POST请求到Dify API（流式模式）...")
             # 使用stream=True来获取流式响应
-            response = requests.post(url, headers=self.headers, json=payload, timeout=30, stream=True)
+            response = requests.post(url, headers=self.headers, json=payload, timeout=self.timeout_seconds, stream=True)
             
             logger.info(f"📊 收到流式响应: 状态码={response.status_code}")
             
@@ -202,7 +210,7 @@ class DifyWorkflowClient:
         
         try:
             logger.info(f"🚀 发送GET请求到Dify API...")
-            response = requests.get(url, headers=self.headers, timeout=30)
+            response = requests.get(url, headers=self.headers, timeout=self.timeout_seconds)
             
             logger.info(f"📊 收到响应: 状态码={response.status_code}")
             
@@ -257,7 +265,7 @@ class DifyWorkflowClient:
         }
         
         try:
-            response = requests.post(url, headers=self.headers, json=payload, timeout=30)
+            response = requests.post(url, headers=self.headers, json=payload, timeout=self.timeout_seconds)
             
             if response.status_code == 200:
                 result = response.json()
@@ -288,7 +296,7 @@ class DifyWorkflowClient:
         try:
             # 尝试访问一个简单的端点来检查连接
             test_url = f"{self.base_url}/health"
-            response = requests.get(test_url, headers=self.headers, timeout=10)
+            response = requests.get(test_url, headers=self.headers, timeout=self.timeout_seconds)
             return response.status_code == 200
         except Exception as e:
             logger.warning(f"Dify API健康检查失败: {str(e)}")
@@ -381,7 +389,83 @@ class DifyWorkflowClient:
         logger.info(f"📄 提取到的内容: {json.dumps(content, ensure_ascii=False, indent=2)}")
         return content
 
-    def process_query(self, query: Any, workflow_id: str) -> Dict[str, Any]:
+    def format_input_image_data(self, query: Any) -> Dict[str, Any]:
+        """
+        图片生成任务输入格式化
+        - 支持来自 image_generation_service.py 的列表输入：[{"prompt": ..., "api_key": ...}]
+        - 兼容传统 messages 数组（role/content）与纯字符串 prompt
+
+        Returns:
+            Dict[str, Any]: 包含图片生成所需字段的输入数据
+        """
+        prompt: str = ""
+        llm_image_api_key: str = ""
+        llm_image_base_url: str = ""
+        model: str = ""
+        size: str = "1024x1024"
+        response_format: str = "url"
+        n: int = 1
+
+        # 解析 query
+        if isinstance(query, list):
+            for item in query:
+                if not isinstance(item, dict):
+                    continue
+                # 新结构：直接提供 prompt / api_key / 可选项
+                if "prompt" in item:
+                    prompt = str(item.get("prompt", "") or prompt)
+                # 支持两种输入键名：api_key / apiKey（统一转换为 apiKey 输出）
+                if "llm_image_api_key" in item:
+                    llm_image_api_key = str(item.get("llm_image_api_key", "") or llm_image_api_key) 
+                if "llm_image_base_url" in item:
+                    llm_image_base_url = str(item.get("llm_image_base_url", "") or llm_image_base_url) 
+                if "model" in item:
+                    model = str(item.get("model", "") or model)
+                if "size" in item:
+                    size = str(item.get("size", "") or size)
+                if "response_format" in item:
+                    response_format = str(item.get("response_format", "") or response_format)
+                if "n" in item:
+                    try:
+                        n = int(item.get("n", n))
+                    except Exception:
+                        pass
+
+                # 兼容旧 messages 格式
+                role = item.get("role")
+                content = item.get("content")
+                if role == "user" and isinstance(content, str) and content:
+                    prompt = prompt or content
+
+        elif isinstance(query, str):
+            prompt = query
+        else:
+            # 兜底：字符串化
+            prompt = str(query)
+
+        # 构建输入
+        input_data: Dict[str, Any] = {
+            "prompt": prompt,
+            # 对外统一使用 api_key，传给 Dify 时转换为 apiKey
+            "apiKey": llm_image_api_key,
+            "baseURL": llm_image_base_url,
+            "size": size,
+            "n": n,
+            "response_format": response_format,
+        }
+        if model:
+            input_data["model"] = model
+
+        # 记录日志（脱敏 api_key）
+        masked_key = (llm_image_api_key[:4] + "..." + llm_image_api_key[-4:]) if isinstance(llm_image_api_key, str) and len(llm_image_api_key) > 8 else (llm_image_api_key or "")
+        _log_copy = dict(input_data)
+        # 日志里显示 apiKey，并进行脱敏
+        _log_copy["apiKey"] = masked_key
+        logger.info(f"🧩 图片任务输入: {json.dumps(_log_copy, ensure_ascii=False, indent=2)}")
+
+        return input_data
+
+    def process_query(self, query: Any, workflow_id: str, questType: str = None) -> Dict[str, Any]:
         """
         处理查询的便捷方法
         完整的工作流调用流程：运行工作流 -> 获取状态 -> 提取结果
@@ -389,7 +473,7 @@ class DifyWorkflowClient:
         Args:
             query: 用户查询内容或消息数组
             workflow_id: 工作流ID
-            
+            questType: 任务类型（如果为None，将从环境变量获取）
         Returns:
             包含处理结果的字典，格式如下：
             {
@@ -405,8 +489,10 @@ class DifyWorkflowClient:
         try:
             logger.info(f"🔍 开始处理Dify工作流查询")
             # 使用format_input_data函数格式化输入数据
-            input_data = self.format_input_data(query)
-            
+            if questType=="image_generation":
+                input_data = self.format_input_image_data(query) # 图片生成任务，需要额外添加questType字段
+            else:
+                input_data = self.format_input_data(query)
             logger.info(f"🆔 工作流ID: {workflow_id}")
             logger.info(f"📤 输入数据: {json.dumps(input_data, ensure_ascii=False, indent=2)}")
             
@@ -477,7 +563,7 @@ class DifyWorkflowClient:
             }
 
     @classmethod
-    def process_query_with_config(cls, query: Any, api_key: str = None, base_url: str = None, workflow_id: str = None) -> Dict[str, Any]:
+    def process_query_with_config(cls, query: Any, api_key: str = None, base_url: str = None, workflow_id: str = None, questType: str = None) -> Dict[str, Any]:
         """
         带配置检查的查询处理方法
         包含完整的配置验证和错误处理
@@ -487,7 +573,7 @@ class DifyWorkflowClient:
             api_key: Dify API密钥（如果为None，将从环境变量获取）
             base_url: Dify API基础URL（如果为None，将从环境变量获取）
             workflow_id: 工作流ID（如果为None，将从环境变量获取）
-            
+            questType: 任务类型（如果为None，将从环境变量获取）
         Returns:
             包含处理结果的字典，格式如下：
             {
@@ -509,12 +595,13 @@ class DifyWorkflowClient:
         api_key = api_key or cls._api_key
         base_url = base_url or cls._base_url
         workflow_id = workflow_id or cls._workflow_id
-        
+        # 任务类型直接使用传入的参数，不依赖未定义的类属性
+        questType = questType
         logger.info(f"📋 配置信息:")
         logger.info(f"   🔑 API密钥: {'已设置' if api_key else '未设置'}")
         logger.info(f"   🌐 基础URL: {base_url}")
         logger.info(f"   🆔 工作流ID: {workflow_id if workflow_id else '未设置'}")
-        
+        logger.info(f"   🔍 任务类型: {questType}")
         # 配置检查
         if not api_key or not workflow_id:
             error_msg = "Dify配置不完整，请检查DIFY_API_KEY和DIFY_WORKFLOW_ID环境变量"
@@ -565,10 +652,10 @@ class DifyWorkflowClient:
             logger.info(f"🔧 初始化DifyWorkflowClient...")
             client = cls(api_key=api_key, base_url=base_url, workflow_id=workflow_id)
             logger.info(f"✅ DifyWorkflowClient初始化完成")
-            
             result = client.process_query(
                 query=query_content,
-                workflow_id=workflow_id
+                workflow_id=workflow_id,
+                questType=questType
             )
             
             # 添加配置检查的处理时间
@@ -649,12 +736,12 @@ class DifyWorkflowClient:
                 try:
                     logger.info(f"🔄 尝试第 {retry_count + 1} 次请求...")
                     
-                    # 使用更长的超时时间和重试机制
+                    # 使用统一环境变量配置的超时时间（连接超时固定10秒，读取超时取统一值）
                     response = requests.post(
                         url, 
                         headers=headers, 
                         json=payload, 
-                        timeout=(10, 60),  # (连接超时, 读取超时)
+                        timeout=(10, cls._timeout_seconds),  # (连接超时, 读取超时)
                         stream=True,
                         # verify=True  # 确保SSL验证
                     )
@@ -666,7 +753,7 @@ class DifyWorkflowClient:
                         chunk_count = 0
                         # 按SSE事件分隔（以"\n\n"作为分隔符），先以字节读取再按编码解码，最后补回事件结束的双换行
                         encoding = response.encoding or "utf-8"
-                        for event in response.iter_lines(decode_unicode=False, delimiter=b"\n\n"):
+                        for event in response.iter_lines(chunk_size=1024,decode_unicode=False, delimiter=b"\n\n"):
                             if not event:
                                 continue
                             try:

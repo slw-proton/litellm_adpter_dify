@@ -92,7 +92,7 @@ check_service() {
         # 对于LiteLLM代理，尝试检查models端点
         if [[ "$service_name" == "LiteLLM代理" ]]; then
             print_info "尝试检查LiteLLM代理的models端点..."
-            if curl -s --max-time "$timeout" "http://localhost:8080/models" > /dev/null 2>&1; then
+            if curl -s --max-time "$timeout" "http://0.0.0.0:8080/models" > /dev/null 2>&1; then
                 print_success "$service_name 运行正常（通过models端点确认）"
                 return 0
             fi
@@ -118,7 +118,7 @@ start_business_api() {
     sleep 5
     
     # 检查业务API
-    if check_service "业务API" "http://localhost:8002/health"; then
+    if check_service "业务API" "http://0.0.0.0:8002/health"; then
         print_success "业务API启动成功"
     else
         print_error "业务API启动失败"
@@ -143,7 +143,7 @@ start_litellm_proxy() {
     sleep 10
     
     # 检查LiteLLM代理
-    if check_service "LiteLLM代理" "http://localhost:8080/health"; then
+    if check_service "LiteLLM代理" "http://0.0.0.0:8080/health"; then
         print_success "LiteLLM代理启动成功"
     else
         print_warning "LiteLLM代理启动失败"
@@ -195,7 +195,7 @@ run_dify_test() {
     
     # 运行简单的Dify集成测试
     print_info "测试Dify工作流集成..."
-    test_response=$(curl -s -X POST http://localhost:8002/api/process \
+    test_response=$(curl -s -X POST http://0.0.0.0:8002/api/process \
         -H 'Content-Type: application/json' \
         -d '{
             "query": "测试Dify集成",
@@ -218,8 +218,8 @@ run_dify_test() {
 show_service_info() {
     echo ""
     print_info "=== 服务启动完成 ==="
-    echo "业务API: http://localhost:8002"
-    echo "LiteLLM代理: http://localhost:8080"
+    echo "业务API: http://0.0.0.0:8002"
+    echo "LiteLLM代理: http://0.0.0.0:8080"
     echo ""
     print_info "日志文件位置:"
     echo "- 业务API: $LOG_DATE_DIR/business_api.log"

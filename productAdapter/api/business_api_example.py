@@ -13,7 +13,7 @@ import time
 import uuid
 import argparse
 import logging
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, List
 
 # FastAPI相关导入
 from fastapi import FastAPI
@@ -35,6 +35,7 @@ from productAdapter.utils.logging_init import (
 )
 from productAdapter.utils.env_loader import get_env, get_env_int, load_env_file
 from productAdapter.api.dify_workflow_client import DifyWorkflowClient
+from productAdapter.api.image_generation_service import generate_images
 
 # 初始化日志记录器
 logger = init_logger_with_env_loader("business_api", project_root)
@@ -93,9 +94,13 @@ async def stream_dify_response(query: Any, response_id: str, start_time: float) 
         async for line in DifyWorkflowClient.stream_dify_response(query, response_id, start_time):
             try:
                 chunk_count += 1
-                print(f"[business_api] 🔄 第{chunk_count}个数据块: {line[:100]}...")
+                try:
+                    events_in_chunk = line.count("data:") if isinstance(line, str) else 1
+                except Exception:
+                    events_in_chunk = 1
+                print(f"[business_api] 🔄 第{chunk_count}个数据块 | events={events_in_chunk} | preview={line[:100] if isinstance(line, str) else str(line)[:100]}...")
                 
-                # 确保line是字符串格式
+                # 确保line是字符串格式  
                 if isinstance(line, str):
                     print(f"[business_api] 📤 Yielding 第{chunk_count}个chunk")
                     yield line
@@ -189,6 +194,55 @@ async def process(request: BusinessRequest):
         processing_time=processing_time
     )
     
+    return response.dict()
+
+class ImageGenerationRequest(BaseModel):
+    """图片生成请求模型"""
+    prompt: str = Field(..., description="图片生成提示词")
+    model: Optional[str] = Field(None, description="图片模型名称，未提供时读取环境变量")
+    size: Optional[str] = Field("1024x1024", description="图片尺寸，例如 512x512、1024x1024")
+    response_format: Optional[str] = Field("url", description="响应格式: url 或 b64_json")
+    n: Optional[int] = Field(1, description="生成图片数量")
+
+
+class ImageGenerationResponse(BaseModel):
+    """图片生成响应模型"""
+    response_id: str
+    data: Any
+    timestamp: int
+    processing_time: float
+    model: Optional[str] = None
+
+
+@app.post("/api/generate_image")
+async def generate_image(request: ImageGenerationRequest):
+    """
+    生成图片接口
+    - 默认返回模拟URL，便于前端联调
+    - 当设置 ENABLE_LITELLM_IMAGE=true 且正确配置相关API Key时，调用LiteLLM实际生成
+    """
+    start_time = time.time()
+    response_id = f"img-{uuid.uuid4().hex[:10]}"
+
+    data, chosen_model = generate_images(
+        prompt=request.prompt,
+        model=request.model,
+        size=request.size,
+        n=request.n,
+        response_format=request.response_format,
+    )
+
+    processing_time = time.time() - start_time
+    response = ImageGenerationResponse(
+        response_id=response_id,
+        data=data,
+        timestamp=int(time.time()),
+        processing_time=processing_time,
+        model=chosen_model,
+    )
+    logger.info(
+        f"🔄 图片生成响应: {json.dumps(response.dict(), ensure_ascii=False, indent=2)}"
+    )
     return response.dict()
 
 @app.get("/models")

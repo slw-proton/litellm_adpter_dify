@@ -12,6 +12,7 @@ import json
 import asyncio
 import logging
 from datetime import datetime
+import time
 import openai
 # from platform_utils import (
 #     get_platform_functions,
@@ -315,16 +316,22 @@ async def test_openai_async_client(logger=None):
                 try:
                     # 使用正确的异步流式处理方式
                     chunk_count = 0
+                    prev_time = None
                     async for chunk in stream:
                         chunk_count += 1
-                        print(f"\n[客户端] 📦 收到第{chunk_count}个流式块")
-                        print(f"[客户端] 完整chunk对象: {chunk}")
-                        print(f"[客户端] chunk类型: {type(chunk)}")
-                        print(f"[客户端] chunk属性: {dir(chunk)}")
+                        now = time.time()
+                        ts = time.strftime("%H:%M:%S", time.localtime(now))
+                        ms = int((now - int(now)) * 1000)
+                        interval = 0.0 if prev_time is None else (now - prev_time)
+                        prev_time = now
+                        print(f"\n[客户端] ⏱ {ts}.{ms:03d} 间隔: {interval:.3f}s | 📦 收到第{chunk_count}个流式块", end="", flush=True)
+                        # print(f"[客户端] 完整chunk对象: {chunk}")
+                        # print(f"[客户端] chunk类型: {type(chunk)}")
+                        # print(f"[客户端] chunk属性: {dir(chunk)}")
                         
                         # 检查chunk是否有choices属性
                         if hasattr(chunk, 'choices') and chunk.choices:
-                            print(f"[客户端] choices长度: {len(chunk.choices)}")
+                            # print(f"[客户端] choices长度: {len(chunk.choices)}")
                             if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content is not None:
                                 content = chunk.choices[0].delta.content
                                 collected_content += content
@@ -337,7 +344,7 @@ async def test_openai_async_client(logger=None):
                                 print(content, end="", flush=True)
                             else:
                                 print(f"[客户端] ⚠️ chunk.choices[0].delta.content 为 None")
-                                print(f"[客户端] chunk.choices[0]属性: {dir(chunk.choices[0])}")
+                                # print(f"[客户端] chunk.choices[0]属性: {dir(chunk.choices[0])}")
                         else:
                             print(f"[客户端] ⚠️ chunk没有choices属性或choices为空")
                             # 尝试直接访问text属性（GenericStreamingChunk格式）
@@ -389,8 +396,8 @@ async def test_openai_async_client(logger=None):
                 logger.info(message)
                 
                 # 打印收集到的完整内容
-                print(f"📝 完整响应内容: {collected_content}")
-                logger.info(f"📝 完整响应内容: {collected_content}")
+                # print(f"📝 完整响应内容: {collected_content}")
+                # logger.info(f"📝 完整响应内容: {collected_content}")
                 
             except Exception as e:
                 error_msg = f"异步流式请求失败: {str(e)}"
@@ -565,6 +572,69 @@ async def test_openai_structured_output(logger=None):
         error_msg = f"structured output请求失败: {str(e)}"
         print(f"❌ {error_msg}")
         return False
+
+
+async def run_image_tests(args, logger=None) -> bool:
+    """
+    运行图片生成测试：支持 image_sync / image_async / image_all
+    - 使用 OpenAI Python SDK 直连本地 LiteLLM 代理的 images 接口
+    - 可用环境变量覆盖：LITELLM_PROXY_HOST, LITELLM_PROXY_PORT, IMAGE_MODEL, IMAGE_PROMPT, IMAGE_N, IMAGE_SIZE, IMAGE_FORMAT
+    """
+    # 读取 LiteLLM 代理地址
+    host = get_env("LITELLM_PROXY_HOST", "localhost")
+    port = get_env_int("LITELLM_PROXY_PORT", 8080)
+    base_url = f"http://{host}:{port}"
+
+    # 初始化 OpenAI 客户端（同步/异步）
+    client = openai.OpenAI(
+        base_url=base_url,
+        api_key="dummy-key"
+    )
+    async_client = openai.AsyncOpenAI(
+        base_url=base_url,
+        api_key="dummy-key"
+    )
+
+    def _test_image_sync() -> bool:
+        try:
+            print("=== 开始测试 OpenAI 图片生成(同步) ===")
+            response = client.images.generate(
+                model=get_env("IMAGE_MODEL", "my-custom-model"),
+                prompt=get_env("IMAGE_PROMPT", "一个宁静的湖边日落"),
+                n=int(get_env("IMAGE_N", 1)),
+                size=get_env("IMAGE_SIZE", "1024x1024"),
+                response_format=get_env("IMAGE_FORMAT", "url"),
+            )
+            print(f"response: {json.dumps(response.model_dump(), ensure_ascii=False, indent=2)}")
+            return True
+        except Exception as e:
+            print(f"❌ 图片生成(同步)失败: {e}")
+            return False
+
+    async def _test_image_async() -> bool:
+        try:
+            print("=== 开始测试 OpenAI 图片生成(异步) ===")
+            response = await async_client.images.generate(
+                model=get_env("IMAGE_MODEL", "my-custom-model"),
+                prompt=get_env("IMAGE_PROMPT", "一个宁静的湖边日落"),
+                n=int(get_env("IMAGE_N", 1)),
+                size=get_env("IMAGE_SIZE", "1024x1024"),
+                response_format=get_env("IMAGE_FORMAT", "url"),
+            )
+            print(f"response: {json.dumps(response.model_dump(), ensure_ascii=False, indent=2)}")
+            return True
+        except Exception as e:
+            print(f"❌ 图片生成(异步)失败: {e}")
+            return False
+
+    if args.test == 'image_sync':
+        return _test_image_sync()
+    if args.test == 'image_async':
+        return await _test_image_async()
+    # image_all
+    ok1 = _test_image_sync()
+    ok2 = await _test_image_async()
+    return ok1 and ok2
 
 def test_openai_stream_client(logger=None):
     """
@@ -988,8 +1058,16 @@ def parse_arguments():
     """
     import argparse
     parser = argparse.ArgumentParser(description="使用OpenAI客户端测试LiteLLM接口")
-    parser.add_argument("--test", type=str, choices=['sync', 'async', 'stream', 'models_list', 'models', 'structured', 'sync_vs_async', 'all'],
-                        default='async', help="指定要运行的测试类型")
+    parser.add_argument(
+        "--test",
+        type=str,
+        choices=[
+            'sync', 'async', 'stream', 'models_list', 'models', 'structured', 'sync_vs_async', 'all',
+            'image_sync', 'image_async', 'image_all'
+        ],
+        default='async',
+        help="指定要运行的测试类型",
+    )
     
     return parser.parse_args()
 
@@ -1029,6 +1107,8 @@ async def main():
         success = await test_openai_structured_output(logger=logger)
     elif args.test == 'sync_vs_async':
         success = await test_openai_sync_vs_async_comparison(logger=logger)
+    elif args.test in ('image_sync', 'image_async', 'image_all'):
+        success = await run_image_tests(args, logger=logger)
     else:  # all
         success = await run_all_tests(logger=logger)
     
