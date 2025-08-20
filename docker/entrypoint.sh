@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+# 移除 set -e 以避免兼容性问题
 
 # 日志目录（容器内）
 LOG_DIR=${LOG_DIR:-/var/log/trae-litellm}

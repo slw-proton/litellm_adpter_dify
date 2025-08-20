@@ -1,9 +1,21 @@
-ARG BASE_IMAGE=dify-openai-base:latest
-FROM ${BASE_IMAGE}
+# 使用本地 Dockerfile.base 作为基础镜像
+FROM litellm-adapter-base:latest
 
 # 复制项目源代码
 COPY . /app
-COPY productAdapter/config/.env.product /app/productAdapter/config/.env
+
+# 创建配置目录
+RUN mkdir -p /app/productAdapter/config
+
+# 修复脚本换行符问题（Windows CRLF -> Unix LF）
+RUN find /app -name "*.sh" -exec sed -i 's/\r$//' {} \;
+
+# 安装时区数据并设置时区
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
 
 # 默认环境变量（可在运行时覆盖）
 ENV LOG_LEVEL=DEBUG \
@@ -14,12 +26,6 @@ ENV LOG_LEVEL=DEBUG \
     BUSINESS_API_HOST=0.0.0.0 \
     BUSINESS_API_PORT=8002 \
     TZ=Asia/Shanghai
-
-RUN DEBIAN_FRONTEND=noninteractive apt-get update \
-    && apt-get install -y --no-install-recommends tzdata \
-    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
-    && echo $TZ > /etc/timezone \
-    && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8002 8080
 
