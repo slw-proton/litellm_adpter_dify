@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: dify-openai:latest
+    image: litellm-adapter:latest
     container_name: dify-openai
     working_dir: /app
     ports:
