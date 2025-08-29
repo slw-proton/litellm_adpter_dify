@@ -1,5 +1,6 @@
-# 使用本地 Dockerfile.base 作为基础镜像
-FROM litellm-adapter-base:latest
+# 使用基础镜像
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 
 # 复制项目源代码
 COPY . /app
