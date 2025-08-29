@@ -1,5 +1,5 @@
 # 使用基础镜像
-ARG BASE_IMAGE
+ARG BASE_IMAGE=litellm-adapter-base:latest
 FROM ${BASE_IMAGE}
 
 # 复制项目源代码
